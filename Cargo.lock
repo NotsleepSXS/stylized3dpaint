@@ -632,6 +632,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui-phosphor"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f4299551488dddaa8f757727e1eb4ffdaf277ffe6e30b413403468f5ecf4634"
+dependencies = [
+ "egui",
+]
+
+[[package]]
 name = "egui-wgpu"
 version = "0.36.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1539,6 +1548,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nix"
+version = "0.31.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+dependencies = [
+ "bitflags 2.13.2",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
+]
+
+[[package]]
 name = "nohash-hasher"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2319,6 +2340,7 @@ dependencies = [
  "glam",
  "gltf",
  "log",
+ "serde",
  "tobj",
  "ufbx",
 ]
@@ -2564,16 +2586,22 @@ name = "stylized3dpaint"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytemuck",
  "eframe",
  "egui",
+ "egui-phosphor",
  "egui-wgpu",
  "env_logger",
  "glam",
  "image",
  "log",
+ "pollster 1.0.1",
  "rfd",
  "s3dp-core",
  "s3dp-render",
+ "serde",
+ "serde_json",
+ "zip",
 ]
 
 [[package]]
@@ -2734,6 +2762,12 @@ checksum = "cb30dbbd9036155e74adad6812e9898d03ec374946234fbcebd5dfc7b9187b90"
 dependencies = [
  "rustc-hash 2.1.3",
 ]
+
+[[package]]
+name = "typed-path"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e28f89b80c87b8fb0cf04ab448d5dd0dd0ade2f8891bae878de66a75a28600e"
 
 [[package]]
 name = "ufbx"
@@ -3672,6 +3706,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "zip"
+version = "9.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e2fc56a6707efb066c40aead2409ebb1224e6dde24a074e9fbc78ced500507b"
+dependencies = [
+ "crc32fast",
+ "flate2",
+ "indexmap",
+ "memchr",
+ "nix",
+ "typed-path",
+ "zopfli",
+]
+
+[[package]]
 name = "zlib-rs"
 version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3682,6 +3731,18 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[package]]
+name = "zopfli"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aaf7fc5d30c28483d93805c4a5e12b05bbb52407fa67c5f8bd552374cd01fb11"
+dependencies = [
+ "bumpalo",
+ "crc32fast",
+ "log",
+ "simd-adler32",
+]
 
 [[package]]
 name = "zune-core"

@@ -12,3 +12,4 @@ tobj.workspace = true
 ufbx.workspace = true
 anyhow.workspace = true
 log.workspace = true
+serde.workspace = true

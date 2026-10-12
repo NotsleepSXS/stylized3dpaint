@@ -1,13 +1,14 @@
 use egui_wgpu::wgpu;
 use glam::Mat4;
-use s3dp_core::{Mesh, OrbitCamera, Vertex};
+use s3dp_core::{Channel, Mesh, OrbitCamera, Vertex};
 use wgpu::util::DeviceExt;
 
-use crate::paint::{Brush, PaintSystem, SCENE_DEPTH_FORMAT};
+use crate::paint::{Brush, Painter, SCENE_DEPTH_FORMAT};
 
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SAMPLES: u32 = 4;
+const PICK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ShadingMode {
@@ -16,10 +17,23 @@ pub enum ShadingMode {
     Unlit,
     UvChecker,
     Normals,
+    Roughness,
+    Metallic,
+    Height,
+    Emissive,
 }
 
 impl ShadingMode {
-    pub const ALL: [ShadingMode; 4] = [Self::Lit, Self::Unlit, Self::UvChecker, Self::Normals];
+    pub const ALL: [ShadingMode; 8] = [
+        Self::Lit,
+        Self::Unlit,
+        Self::UvChecker,
+        Self::Normals,
+        Self::Roughness,
+        Self::Metallic,
+        Self::Height,
+        Self::Emissive,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -27,6 +41,10 @@ impl ShadingMode {
             Self::Unlit => "Unlit (albedo)",
             Self::UvChecker => "UV Checker",
             Self::Normals => "Normals",
+            Self::Roughness => "Roughness",
+            Self::Metallic => "Metallic",
+            Self::Height => "Height",
+            Self::Emissive => "Emissive",
         }
     }
 }
@@ -59,8 +77,9 @@ struct Targets {
 pub struct Viewport {
     pipeline: wgpu::RenderPipeline,
     depth_pipeline: wgpu::RenderPipeline,
+    pick_pipeline: wgpu::RenderPipeline,
     view_layout: wgpu::BindGroupLayout,
-    pub paint: PaintSystem,
+    pub paint: Painter,
     texture_size: u32,
     /// Camera and size of the last rendered frame (dabs are in its pixel space).
     last_frame: Option<(OrbitCamera, [u32; 2])>,
@@ -100,26 +119,28 @@ impl Viewport {
             layout: &bgl,
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() }],
         });
+        // One texture per channel, then the sampler.
+        let mut view_entries: Vec<wgpu::BindGroupLayoutEntry> = (0..Channel::COUNT as u32)
+            .map(|binding| wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            })
+            .collect();
+        view_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: Channel::COUNT as u32,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        });
         let view_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("paint view"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
+            entries: &view_entries,
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("viewport"),
@@ -165,7 +186,7 @@ impl Viewport {
                 module: &shader,
                 entry_point: Some("vs_main"),
                 compilation_options: Default::default(),
-                buffers: &[Some(vertex_layout)],
+                buffers: &[Some(vertex_layout.clone())],
             },
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: Some(wgpu::DepthStencilState {
@@ -185,11 +206,39 @@ impl Viewport {
             multiview_mask: None,
             cache: None,
         });
+        let pick_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("pick"),
+            layout: Some(&depth_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_pick"),
+                compilation_options: Default::default(),
+                buffers: &[Some(vertex_layout.clone())],
+            },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: SCENE_DEPTH_FORMAT,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_pick"),
+                compilation_options: Default::default(),
+                targets: &[Some(PICK_FORMAT.into())],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
         Self {
             pipeline,
             depth_pipeline,
+            pick_pipeline,
             view_layout,
-            paint: PaintSystem::new(device),
+            paint: Painter::new(device),
             texture_size: 2048,
             last_frame: None,
             globals,
@@ -216,10 +265,55 @@ impl Viewport {
         self.mesh = Some(GpuMesh { vertices, indices, index_count: mesh.indices.len() as u32 });
     }
 
+    /// Texture set and UV of the surface at a pixel of the last rendered frame.
+    pub fn pick(&self, device: &wgpu::Device, queue: &wgpu::Queue, px: [u32; 2]) -> Option<(usize, [f32; 2])> {
+        let mesh = self.mesh.as_ref()?;
+        let (_, size) = self.last_frame.as_ref()?;
+        if px[0] >= size[0] || px[1] >= size[1] {
+            return None;
+        }
+        use wgpu::TextureUsages as U;
+        let color = crate::gpu::texture2d(device, "pick", *size, PICK_FORMAT, U::RENDER_ATTACHMENT | U::COPY_SRC);
+        let depth = crate::gpu::texture2d(device, "pick depth", *size, SCENE_DEPTH_FORMAT, U::RENDER_ATTACHMENT);
+        let (color_view, depth_view) = (crate::gpu::view(&color), crate::gpu::view(&depth));
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("pick"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &color_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_scissor_rect(px[0], px[1], 1, 1);
+            pass.set_pipeline(&self.pick_pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+            pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+            for (i, set) in self.paint.sets.iter().enumerate() {
+                pass.draw_indexed(set.index_range(), 0, i as u32..i as u32 + 1);
+            }
+        }
+        queue.submit([encoder.finish()]);
+        let bytes = crate::gpu::read_region(device, queue, &color, px[0], px[1])?;
+        let f: &[f32] = bytemuck::cast_slice(&bytes);
+        (f[2] >= 1.0).then(|| (f[2] as usize - 1, [f[0], f[1]]))
+    }
+
     /// Reads back the last rendered frame as sRGB RGBA8 (width, height, pixels).
     pub fn read_color(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Option<(u32, u32, Vec<u8>)> {
         let t = self.targets.as_ref()?;
-        let data = crate::paint::read_rgba8(device, queue, &t.resolve_tex)?;
+        let data = crate::gpu::read_texture(device, queue, &t.resolve_tex)?;
         Some((t.size[0], t.size[1], data))
     }
 
@@ -227,8 +321,8 @@ impl Viewport {
         self.texture_size
     }
 
-    pub fn begin_stroke(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, brush: Brush) {
-        self.paint.begin_stroke(device, queue, brush);
+    pub fn begin_stroke(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, brush: Brush) -> Result<(), &'static str> {
+        self.paint.begin_stroke(device, queue, brush)
     }
 
     /// Returns true when the output texture was (re)created and must be re-registered with egui.
@@ -294,11 +388,13 @@ impl Viewport {
 
         let targets = self.targets.as_ref().unwrap();
         let mut encoder = device.create_command_encoder(&Default::default());
-        if let (Some(mesh), Some((cam, px))) = (&self.mesh, &self.last_frame) {
+        if let Some(mesh) = &self.mesh {
             // Dabs were placed against the previous frame; its depth is still in scene_depth.
-            if *px == size {
-                self.paint.flush(device, queue, &mut encoder, &mesh.vertices, &mesh.indices, &targets.scene_depth, cam, size);
-            }
+            let scene = match &self.last_frame {
+                Some((cam, px)) if *px == size => Some((&targets.scene_depth, cam, size)),
+                _ => None,
+            };
+            self.paint.update(device, queue, &mut encoder, &mesh.vertices, &mesh.indices, scene);
         }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

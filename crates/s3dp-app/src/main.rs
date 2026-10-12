@@ -1,4 +1,9 @@
 mod app;
+mod color_picker;
+mod project;
+mod theme;
+mod ui_layers;
+mod ui_panels;
 
 fn main() -> eframe::Result {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn"))

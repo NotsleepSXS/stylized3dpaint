@@ -1,63 +1,101 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
-use s3dp_core::{Mesh, OrbitCamera, import};
+use s3dp_core::{Channel, ChannelMask, ChannelValues, Mesh, OrbitCamera, import};
 use s3dp_render::{Brush, ShadingMode, Viewport, wgpu};
 
-const TEXTURE_SIZES: [u32; 3] = [1024, 2048, 4096];
+use crate::{project, theme, ui_layers, ui_panels};
 
-/// Brush settings as edited in the UI (size in logical points).
-struct BrushUi {
-    color: [u8; 3],
-    size: f32,
-    hardness: f32,
-    opacity: f32,
-    flow: f32,
-    erase: bool,
+pub const TEXTURE_SIZES: [u32; 3] = [1024, 2048, 4096];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tool {
+    Brush,
+    Eraser,
+    Eyedropper,
 }
 
-impl Default for BrushUi {
-    fn default() -> Self {
-        Self { color: [217, 89, 64], size: 30.0, hardness: 0.6, opacity: 1.0, flow: 1.0, erase: false }
+impl Tool {
+    pub fn icon(self) -> &'static str {
+        use egui_phosphor::regular as i;
+        match self {
+            Tool::Brush => i::PAINT_BRUSH,
+            Tool::Eraser => i::ERASER,
+            Tool::Eyedropper => i::EYEDROPPER,
+        }
     }
-}
 
-impl BrushUi {
-    fn to_brush(&self, pixels_per_point: f32) -> Brush {
-        Brush {
-            color: self.color.map(|c| c as f32 / 255.0),
-            radius: self.size * pixels_per_point,
-            hardness: self.hardness,
-            opacity: self.opacity,
-            flow: self.flow,
-            erase: self.erase,
+    pub fn label(self) -> &'static str {
+        match self {
+            Tool::Brush => "Brush (B)",
+            Tool::Eraser => "Eraser (E)",
+            Tool::Eyedropper => "Eyedropper (I) — picks the whole material",
         }
     }
 }
 
+/// Brush shape settings shared by brush and eraser (size in logical points).
+pub struct BrushSettings {
+    pub size: f32,
+    pub hardness: f32,
+    pub opacity: f32,
+    pub flow: f32,
+    pub channels: ChannelMask,
+}
+
+impl Default for BrushSettings {
+    fn default() -> Self {
+        Self { size: 30.0, hardness: 0.6, opacity: 1.0, flow: 1.0, channels: ChannelMask::BASE_COLOR }
+    }
+}
+
+/// Something that would discard unsaved work and needs confirmation first.
+enum PendingAction {
+    OpenModel(PathBuf),
+    OpenProject(PathBuf),
+    Quit,
+}
+
 pub struct App {
-    render_state: egui_wgpu::RenderState,
-    viewport: Viewport,
+    pub render_state: egui_wgpu::RenderState,
+    pub viewport: Viewport,
     viewport_tex: Option<egui::TextureId>,
     camera: OrbitCamera,
-    shading: ShadingMode,
-    mesh: Mesh,
-    mesh_path: Option<PathBuf>,
-    status: String,
+    pub shading: ShadingMode,
+    pub mesh: Mesh,
+    /// Project file for Save, if the document came from / was saved to one.
+    project_path: Option<PathBuf>,
+    saved_revision: u64,
+    pub status: String,
     /// Last viewport width / height, used for framing.
     aspect: f32,
     /// Frame the mesh once the viewport size is known.
     needs_frame: bool,
-    brush: BrushUi,
-    texture_size: u32,
+
+    pub tool: Tool,
+    pub brush: BrushSettings,
+    /// Foreground material: what the brush paints (base color = foreground color).
+    pub fg: ChannelValues,
+    /// Background color (Photoshop's second swatch, swapped with X).
+    pub bg_color: [f32; 3],
+    pub texture_size: u32,
     /// Last dab position of the active stroke, in physical viewport pixels.
     last_dab: Option<egui::Pos2>,
+
+    /// Registered layer thumbnails: (layer id, is mask) -> (egui texture, revision).
+    thumbs: HashMap<(u64, bool), (egui::TextureId, u64)>,
+    pub layers_ui: ui_layers::LayersUi,
+    pending: Option<PendingAction>,
+    allow_close: bool,
+    pub picker: crate::color_picker::PickerState,
 }
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, initial: Option<PathBuf>) -> anyhow::Result<Self> {
         let render_state = cc.wgpu_render_state.clone().context("wgpu backend is required")?;
         cc.egui_ctx.set_theme(egui::Theme::Dark);
+        theme::apply(&cc.egui_ctx);
         let viewport = Viewport::new(&render_state.device);
         let mut app = Self {
             render_state,
@@ -66,36 +104,50 @@ impl App {
             camera: OrbitCamera::default(),
             shading: ShadingMode::default(),
             mesh: Mesh::default(),
-            mesh_path: None,
+            project_path: None,
+            saved_revision: 0,
             status: String::new(),
             aspect: 1.5,
             needs_frame: true,
-            brush: BrushUi::default(),
+            tool: Tool::Brush,
+            brush: BrushSettings::default(),
+            fg: ChannelValues { base_color: [0.85, 0.35, 0.25], ..ChannelValues::DEFAULTS },
+            bg_color: [1.0; 3],
             texture_size: 2048,
             last_dab: None,
+            thumbs: HashMap::new(),
+            layers_ui: Default::default(),
+            pending: None,
+            allow_close: false,
+            picker: Default::default(),
         };
-        app.set_mesh(Mesh::uv_sphere(64, 32), None);
+        app.set_mesh(Mesh::uv_sphere(64, 32));
+        app.saved_revision = app.viewport.paint.revision();
         if let Some(path) = initial {
-            app.open(path);
+            app.open_path(path);
         }
         Ok(app)
     }
 
-    fn set_mesh(&mut self, mesh: Mesh, path: Option<PathBuf>) {
+    pub fn is_modified(&self) -> bool {
+        self.viewport.paint.revision() != self.saved_revision
+    }
+
+    fn set_mesh(&mut self, mesh: Mesh) {
         let rs = &self.render_state;
         self.viewport.set_mesh(&rs.device, &rs.queue, &mesh, self.texture_size);
         self.status = format!(
-            "{}: {} tris, {} verts, {} texture set(s){}",
+            "{}: {} tris, {} texture set(s){}",
             mesh.name,
             mesh.triangle_count(),
-            mesh.vertices.len(),
             mesh.parts.len(),
             if mesh.has_uvs() { "" } else { " — no UVs!" }
         );
         self.mesh = mesh;
-        self.mesh_path = path;
         self.needs_frame = true;
         self.last_dab = None;
+        self.thumbs.clear();
+        self.project_path = None;
     }
 
     fn frame_mesh(&mut self) {
@@ -103,9 +155,42 @@ impl App {
         self.camera.frame(b.center(), b.radius(), self.aspect);
     }
 
-    fn open(&mut self, path: PathBuf) {
-        match import::load(&path) {
-            Ok(mesh) => self.set_mesh(mesh, Some(path)),
+    // ------------------------------------------------------------------ files
+
+    fn is_project(path: &Path) -> bool {
+        path.extension().is_some_and(|e| e.eq_ignore_ascii_case("s3dp"))
+    }
+
+    /// Opens a model or a project, asking first if there are unsaved changes.
+    pub fn open_path(&mut self, path: PathBuf) {
+        let action = if Self::is_project(&path) { PendingAction::OpenProject(path) } else { PendingAction::OpenModel(path) };
+        self.request(action);
+    }
+
+    fn request(&mut self, action: PendingAction) {
+        if self.is_modified() {
+            self.pending = Some(action);
+        } else {
+            self.run(action);
+        }
+    }
+
+    fn run(&mut self, action: PendingAction) {
+        match action {
+            PendingAction::OpenModel(path) => self.load_model(&path),
+            PendingAction::OpenProject(path) => self.load_project(&path),
+            PendingAction::Quit => {
+                self.allow_close = true;
+            }
+        }
+    }
+
+    fn load_model(&mut self, path: &Path) {
+        match import::load(path) {
+            Ok(mesh) => {
+                self.set_mesh(mesh);
+                self.saved_revision = self.viewport.paint.revision();
+            }
             Err(e) => {
                 log::error!("{e:#}");
                 self.status = format!("Error: {e:#}");
@@ -113,19 +198,80 @@ impl App {
         }
     }
 
-    fn open_dialog(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
-            .set_title("Open model")
-            .add_filter("3D models", import::SUPPORTED_EXTENSIONS)
-            .pick_file()
-        {
-            self.open(path);
+    fn load_project(&mut self, path: &Path) {
+        let rs = self.render_state.clone();
+        match project::load(path, &mut self.viewport, &rs.device, &rs.queue) {
+            Ok(mesh) => {
+                self.texture_size = self.viewport.texture_size();
+                self.mesh = mesh;
+                self.needs_frame = true;
+                self.thumbs.clear();
+                self.project_path = Some(path.to_owned());
+                self.saved_revision = self.viewport.paint.revision();
+                self.status = format!("Opened {}", path.display());
+            }
+            Err(e) => {
+                log::error!("{e:#}");
+                self.status = format!("Error: {e:#}");
+                // The viewport may be half-loaded; fall back to a clean document.
+                let mesh = std::mem::take(&mut self.mesh);
+                self.set_mesh(mesh);
+            }
         }
     }
 
-    fn export_dialog(&mut self) {
+    pub fn open_model_dialog(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .set_title("New project from model")
+            .add_filter("3D models", import::SUPPORTED_EXTENSIONS)
+            .pick_file()
+        {
+            self.request(PendingAction::OpenModel(path));
+        }
+    }
+
+    pub fn open_project_dialog(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .set_title("Open project")
+            .add_filter("Stylized3DPaint project", &["s3dp"])
+            .pick_file()
+        {
+            self.request(PendingAction::OpenProject(path));
+        }
+    }
+
+    pub fn save(&mut self, save_as: bool) {
+        let path = match (&self.project_path, save_as) {
+            (Some(p), false) => p.clone(),
+            _ => {
+                let Some(mut p) = rfd::FileDialog::new()
+                    .set_title("Save project")
+                    .add_filter("Stylized3DPaint project", &["s3dp"])
+                    .set_file_name(format!("{}.s3dp", self.mesh.name))
+                    .save_file()
+                else {
+                    return;
+                };
+                if !Self::is_project(&p) {
+                    p.set_extension("s3dp");
+                }
+                p
+            }
+        };
+        let rs = &self.render_state;
+        match project::save(&path, &self.mesh, &self.viewport, &rs.device, &rs.queue) {
+            Ok(()) => {
+                self.saved_revision = self.viewport.paint.revision();
+                self.status = format!("Saved {}", path.display());
+                self.project_path = Some(path);
+            }
+            Err(e) => self.status = format!("Save failed: {e:#}"),
+        }
+    }
+
+    pub fn export_dialog(&mut self) {
         let mut dialog = rfd::FileDialog::new().set_title("Export textures to folder");
-        if let Some(dir) = self.mesh_path.as_ref().and_then(|p| p.parent()) {
+        if let Some(dir) = self.project_path.as_ref().and_then(|p| p.parent()) {
             dialog = dialog.set_directory(dir);
         }
         if let Some(dir) = dialog.pick_folder() {
@@ -138,120 +284,109 @@ impl App {
 
     fn export_textures(&self, dir: &Path) -> anyhow::Result<usize> {
         let rs = &self.render_state;
+        let mut count = 0;
         for (i, set) in self.viewport.paint.sets.iter().enumerate() {
-            let (size, data) = self.viewport.paint.read_display(&rs.device, &rs.queue, i).context("GPU readback failed")?;
-            let file = dir.join(format!("{}_{}_BaseColor.png", self.mesh.name, sanitize(&set.name)));
-            image::save_buffer(&file, &data, size, size, image::ColorType::Rgba8)
-                .with_context(|| format!("writing {}", file.display()))?;
+            for c in Channel::ALL {
+                let (size, data) =
+                    self.viewport.paint.read_channel(&rs.device, &rs.queue, i, c).context("GPU readback failed")?;
+                let name = c.label().replace(' ', "");
+                let file = dir.join(format!("{}_{}_{name}.png", sanitize(&self.mesh.name), sanitize(&set.name)));
+                let color = if c.is_color() { image::ColorType::Rgb8 } else { image::ColorType::L8 };
+                image::save_buffer(&file, &data, size, size, color).with_context(|| format!("writing {}", file.display()))?;
+                count += 1;
+            }
         }
-        Ok(self.viewport.paint.sets.len())
+        Ok(count)
     }
 
-    fn undo(&mut self) {
+    pub fn set_texture_size(&mut self, size: u32) {
+        if size == self.texture_size {
+            return;
+        }
+        self.texture_size = size;
+        let mesh = std::mem::take(&mut self.mesh);
+        let path = self.project_path.take();
+        self.set_mesh(mesh);
+        self.project_path = path;
+        self.status = format!("Texture size set to {size} — the layer stack was reset");
+    }
+
+    // ------------------------------------------------------------------ editing helpers
+
+    pub fn undo(&mut self) {
+        self.viewport.paint.undo();
+    }
+
+    pub fn redo(&mut self) {
+        self.viewport.paint.redo();
+    }
+
+    pub fn swap_colors(&mut self) {
+        std::mem::swap(&mut self.fg.base_color, &mut self.bg_color);
+    }
+
+    pub fn reset_colors(&mut self) {
+        // Photoshop defaults are black/white; white foreground reveals when painting masks.
+        self.fg.base_color = [0.0; 3];
+        self.bg_color = [1.0; 3];
+    }
+
+    pub fn brush_for_stroke(&self, pixels_per_point: f32) -> Brush {
+        Brush {
+            values: self.fg,
+            channels: self.brush.channels,
+            radius: self.brush.size * pixels_per_point,
+            hardness: self.brush.hardness,
+            opacity: self.brush.opacity,
+            flow: self.brush.flow,
+            erase: self.tool == Tool::Eraser,
+        }
+    }
+
+    pub fn add_mask(&mut self, index: usize, white: bool) {
         let rs = &self.render_state;
-        self.viewport.paint.undo(&rs.device, &rs.queue);
+        self.viewport.paint.add_mask(&rs.device, &rs.queue, index, white);
     }
 
-    fn redo(&mut self) {
+    /// egui texture for a layer thumbnail, if the painter has one.
+    pub fn thumb_texture(&self, layer_id: u64, mask: bool) -> Option<egui::TextureId> {
+        self.thumbs.get(&(layer_id, mask)).map(|t| t.0)
+    }
+
+    fn sync_thumbnails(&mut self) {
         let rs = &self.render_state;
-        self.viewport.paint.redo(&rs.device, &rs.queue);
-    }
-
-    fn menu_bar(&mut self, ui: &mut egui::Ui) {
-        egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| {
-                if ui.button("Open model…").clicked() {
-                    ui.close();
-                    self.open_dialog();
+        let mut renderer = rs.renderer.write();
+        let paint = &self.viewport.paint;
+        let mut live = Vec::new();
+        for layer in &paint.layers {
+            for mask in [false, true] {
+                let key = (layer.meta.id, mask);
+                let Some(thumb) = paint.thumb(layer.meta.id, mask) else { continue };
+                live.push(key);
+                let view = thumb.texture.create_view(&Default::default());
+                match self.thumbs.get_mut(&key) {
+                    Some((id, rev)) if *rev != thumb.revision => {
+                        renderer.update_egui_texture_from_wgpu_texture(&rs.device, &view, wgpu::FilterMode::Linear, *id);
+                        *rev = thumb.revision;
+                    }
+                    Some(_) => {}
+                    None => {
+                        let id = renderer.register_native_texture(&rs.device, &view, wgpu::FilterMode::Linear);
+                        self.thumbs.insert(key, (id, thumb.revision));
+                    }
                 }
-                if ui.button("Export textures…").clicked() {
-                    ui.close();
-                    self.export_dialog();
-                }
-                ui.separator();
-                if ui.button("Quit").clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-            });
-            ui.menu_button("Edit", |ui| {
-                if ui.add_enabled(self.viewport.paint.can_undo(), egui::Button::new("Undo (Ctrl+Z)")).clicked() {
-                    self.undo();
-                }
-                if ui.add_enabled(self.viewport.paint.can_redo(), egui::Button::new("Redo (Ctrl+Shift+Z)")).clicked() {
-                    self.redo();
-                }
-            });
-            ui.menu_button("View", |ui| {
-                for mode in ShadingMode::ALL {
-                    ui.radio_value(&mut self.shading, mode, mode.label());
-                }
-                ui.separator();
-                if ui.button("Frame model (F)").clicked() {
-                    self.frame_mesh();
-                    ui.close();
-                }
-            });
+            }
+        }
+        self.thumbs.retain(|key, (id, _)| {
+            let keep = live.contains(key);
+            if !keep {
+                renderer.free_texture(id);
+            }
+            keep
         });
     }
 
-    fn side_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Brush");
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.brush.erase, false, "Paint (B)");
-            ui.selectable_value(&mut self.brush.erase, true, "Erase (E)");
-        });
-        ui.horizontal(|ui| {
-            ui.label("Color");
-            ui.color_edit_button_srgb(&mut self.brush.color);
-        });
-        ui.add(egui::Slider::new(&mut self.brush.size, 1.0..=400.0).logarithmic(true).text("Size  [ ]"));
-        ui.add(egui::Slider::new(&mut self.brush.hardness, 0.0..=1.0).text("Hardness"));
-        ui.add(egui::Slider::new(&mut self.brush.opacity, 0.0..=1.0).text("Opacity"));
-        ui.add(egui::Slider::new(&mut self.brush.flow, 0.01..=1.0).logarithmic(true).text("Flow"));
-
-        ui.separator();
-        ui.heading("Scene");
-        ui.label(format!("Mesh: {}", self.mesh.name));
-        if let Some(p) = &self.mesh_path {
-            ui.small(p.display().to_string());
-        }
-        ui.label(format!("Triangles: {}", self.mesh.triangle_count()));
-        if !self.mesh.has_uvs() {
-            ui.colored_label(egui::Color32::from_rgb(230, 120, 80), "Mesh has no UVs — painting needs them");
-        }
-        let mut size = self.texture_size;
-        egui::ComboBox::from_label("Texture size")
-            .selected_text(size.to_string())
-            .show_ui(ui, |ui| {
-                for s in TEXTURE_SIZES {
-                    ui.selectable_value(&mut size, s, s.to_string());
-                }
-            })
-            .response
-            .on_hover_text("Changing the size clears the painting");
-        if size != self.texture_size {
-            self.texture_size = size;
-            let mesh = std::mem::take(&mut self.mesh);
-            let path = self.mesh_path.take();
-            self.set_mesh(mesh, path);
-        }
-        ui.strong("Texture sets");
-        for set in &self.viewport.paint.sets {
-            ui.label(format!("• {}", set.name));
-        }
-
-        ui.separator();
-        ui.strong("Shading");
-        for mode in ShadingMode::ALL {
-            ui.radio_value(&mut self.shading, mode, mode.label());
-        }
-        ui.separator();
-        ui.strong("Controls");
-        ui.small(
-            "LMB — paint\nAlt+LMB / MMB — orbit\nAlt+MMB / Shift+MMB / RMB — pan\n\
-             Wheel / Alt+RMB — zoom\nF — frame model\nCtrl+Z / Ctrl+Shift+Z — undo / redo",
-        );
-    }
+    // ------------------------------------------------------------------ viewport
 
     fn viewport_ui(&mut self, ui: &mut egui::Ui) {
         let rect = ui.available_rect_before_wrap();
@@ -261,11 +396,11 @@ impl App {
             self.frame_mesh();
         }
         self.handle_camera_input(ui, &response);
-        self.handle_paint_input(ui, &response);
+        self.handle_tool_input(ui, &response);
 
         let ppp = ui.ctx().pixels_per_point();
         let size = [(rect.width() * ppp).round() as u32, (rect.height() * ppp).round() as u32];
-        let rs = &self.render_state;
+        let rs = self.render_state.clone();
         let (view, recreated) = self.viewport.render(&rs.device, &rs.queue, size, &self.camera, self.shading);
         let mut renderer = rs.renderer.write();
         let tex = match self.viewport_tex {
@@ -284,32 +419,91 @@ impl App {
         drop(renderer);
         let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
         ui.painter().image(tex, rect, uv, egui::Color32::WHITE);
+        self.sync_thumbnails();
 
-        // Brush cursor.
+        self.viewport_overlay(ui, rect);
         if let Some(pos) = response.hover_pos().filter(|_| !ui.input(|i| i.modifiers.alt)) {
             let painter = ui.painter_at(rect);
-            painter.circle_stroke(pos, self.brush.size, egui::Stroke::new(2.0, egui::Color32::from_black_alpha(140)));
-            painter.circle_stroke(pos, self.brush.size, egui::Stroke::new(1.0, egui::Color32::WHITE));
-            let inner = self.brush.size * self.brush.hardness;
-            if inner > 2.0 {
-                painter.circle_stroke(pos, inner, egui::Stroke::new(1.0, egui::Color32::from_white_alpha(70)));
+            if self.tool == Tool::Eyedropper {
+                painter.text(
+                    pos + egui::vec2(10.0, -10.0),
+                    egui::Align2::LEFT_BOTTOM,
+                    egui_phosphor::regular::EYEDROPPER,
+                    egui::FontId::proportional(18.0),
+                    egui::Color32::WHITE,
+                );
+            } else {
+                painter.circle_stroke(pos, self.brush.size, egui::Stroke::new(2.0, egui::Color32::from_black_alpha(140)));
+                painter.circle_stroke(pos, self.brush.size, egui::Stroke::new(1.0, egui::Color32::WHITE));
+                let inner = self.brush.size * self.brush.hardness;
+                if inner > 2.0 {
+                    painter.circle_stroke(pos, inner, egui::Stroke::new(1.0, egui::Color32::from_white_alpha(70)));
+                }
             }
             ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         }
     }
 
-    fn handle_paint_input(&mut self, ui: &egui::Ui, response: &egui::Response) {
+    /// Shading mode selector floating in the viewport corner.
+    fn viewport_overlay(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
+        let area = egui::Area::new(egui::Id::new("viewport_overlay"))
+            .fixed_pos(rect.right_top() + egui::vec2(-8.0, 8.0))
+            .pivot(egui::Align2::RIGHT_TOP)
+            .order(egui::Order::Middle);
+        area.show(ui.ctx(), |ui| {
+            egui::Frame::new()
+                .fill(egui::Color32::from_black_alpha(150))
+                .corner_radius(4)
+                .inner_margin(egui::Margin::symmetric(6, 4))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(egui_phosphor::regular::CUBE).color(theme::TEXT_DIM));
+                        egui::ComboBox::from_id_salt("shading")
+                            .selected_text(self.shading.label())
+                            .width(130.0)
+                            .show_ui(ui, |ui| {
+                                for (i, mode) in ShadingMode::ALL.into_iter().enumerate() {
+                                    ui.selectable_value(&mut self.shading, mode, format!("{}   F{}", mode.label(), i + 1));
+                                }
+                            });
+                    });
+                });
+        });
+    }
+
+    fn handle_tool_input(&mut self, ui: &egui::Ui, response: &egui::Response) {
         let ppp = ui.ctx().pixels_per_point();
         let to_px = |p: egui::Pos2| ((p - response.rect.min) * ppp).to_pos2();
         let alt = ui.input(|i| i.modifiers.alt);
-        let rs = &self.render_state;
+        let rs = self.render_state.clone();
+
+        if self.tool == Tool::Eyedropper {
+            if (response.clicked_by(egui::PointerButton::Primary) || response.dragged_by(egui::PointerButton::Primary))
+                && !alt
+                && let Some(pos) = response.interact_pointer_pos()
+            {
+                let p = to_px(pos);
+                let picked = self
+                    .viewport
+                    .pick(&rs.device, &rs.queue, [p.x as u32, p.y as u32])
+                    .and_then(|(set, uv)| self.viewport.paint.sample(&rs.device, &rs.queue, set, uv));
+                if let Some(values) = picked {
+                    self.fg = values;
+                }
+            }
+            return;
+        }
 
         if response.drag_started_by(egui::PointerButton::Primary) && !alt {
             if let Some(pos) = response.interact_pointer_pos() {
-                self.viewport.begin_stroke(&rs.device, &rs.queue, self.brush.to_brush(ppp));
-                let p = to_px(pos);
-                self.viewport.paint.add_dabs(&[[p.x, p.y]]);
-                self.last_dab = Some(p);
+                match self.viewport.begin_stroke(&rs.device, &rs.queue, self.brush_for_stroke(ppp)) {
+                    Ok(()) => {
+                        let p = to_px(pos);
+                        self.viewport.paint.add_dabs(&[[p.x, p.y]]);
+                        self.last_dab = Some(p);
+                    }
+                    Err(msg) => self.status = msg.to_owned(),
+                }
             }
         } else if self.last_dab.is_some() && response.dragged_by(egui::PointerButton::Primary) {
             if let (Some(pos), Some(mut last)) = (response.interact_pointer_pos(), self.last_dab) {
@@ -353,56 +547,169 @@ impl App {
         }
     }
 
+    // ------------------------------------------------------------------ shortcuts
+
     fn handle_shortcuts(&mut self, ui: &egui::Ui) {
+        use egui::{Key, KeyboardShortcut as S, Modifiers as M};
+        let cmd_shift = M::COMMAND | M::SHIFT;
+        // More specific shortcuts first: consume_shortcut ignores extra modifiers.
+        let shortcuts: [(S, fn(&mut App)); 12] = [
+            (S::new(cmd_shift, Key::Z), App::redo),
+            (S::new(M::COMMAND, Key::Y), App::redo),
+            (S::new(M::COMMAND, Key::Z), App::undo),
+            (S::new(cmd_shift, Key::S), |a| a.save(true)),
+            (S::new(M::COMMAND, Key::S), |a| a.save(false)),
+            (S::new(cmd_shift, Key::E), App::export_dialog),
+            (S::new(cmd_shift, Key::N), |a| a.viewport.paint.add_layer(s3dp_core::LayerKind::Paint)),
+            (S::new(M::COMMAND, Key::N), App::open_model_dialog),
+            (S::new(M::COMMAND, Key::O), App::open_project_dialog),
+            (S::new(M::COMMAND, Key::J), |a| {
+                let i = a.viewport.paint.active;
+                a.viewport.paint.duplicate_layer(i);
+            }),
+            (S::new(M::COMMAND, Key::Q), |a| a.request(PendingAction::Quit)),
+            (S::new(M::NONE, Key::Delete), |a| {
+                let i = a.viewport.paint.active;
+                a.viewport.paint.delete_layer(i);
+            }),
+        ];
+        for (shortcut, action) in shortcuts {
+            if ui.input_mut(|i| i.consume_shortcut(&shortcut)) {
+                action(self);
+            }
+        }
         if ui.ctx().egui_wants_keyboard_input() {
             return;
         }
-        let undo = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
-        let redo = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, egui::Key::Z);
-        let redo_y = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Y);
-        // Check the more specific shortcut first: consume_shortcut ignores extra modifiers.
-        if ui.input_mut(|i| i.consume_shortcut(&redo) || i.consume_shortcut(&redo_y)) {
-            self.redo();
-        } else if ui.input_mut(|i| i.consume_shortcut(&undo)) {
-            self.undo();
+        let pressed = |k: Key| ui.input(|i| i.key_pressed(k) && i.modifiers.is_none());
+        if pressed(Key::B) {
+            self.tool = Tool::Brush;
         }
-        ui.input(|i| {
-            if i.key_pressed(egui::Key::F) {
-                self.needs_frame = true;
+        if pressed(Key::E) {
+            self.tool = Tool::Eraser;
+        }
+        if pressed(Key::I) {
+            self.tool = Tool::Eyedropper;
+        }
+        if pressed(Key::X) {
+            self.swap_colors();
+        }
+        if pressed(Key::D) {
+            self.reset_colors();
+        }
+        if pressed(Key::F) {
+            self.needs_frame = true;
+        }
+        if pressed(Key::OpenBracket) {
+            self.brush.size = (self.brush.size / 1.15).max(1.0);
+        }
+        if pressed(Key::CloseBracket) {
+            self.brush.size = (self.brush.size * 1.15).min(500.0);
+        }
+        let fkeys = [Key::F1, Key::F2, Key::F3, Key::F4, Key::F5, Key::F6, Key::F7, Key::F8];
+        for (k, mode) in fkeys.into_iter().zip(ShadingMode::ALL) {
+            if pressed(k) {
+                self.shading = mode;
             }
-            if i.key_pressed(egui::Key::E) {
-                self.brush.erase = true;
-            }
-            if i.key_pressed(egui::Key::B) {
-                self.brush.erase = false;
-            }
-            if i.key_pressed(egui::Key::OpenBracket) {
-                self.brush.size = (self.brush.size / 1.15).max(1.0);
-            }
-            if i.key_pressed(egui::Key::CloseBracket) {
-                self.brush.size = (self.brush.size * 1.15).min(400.0);
-            }
+        }
+    }
+
+    fn confirm_dialog(&mut self, ui: &mut egui::Ui) {
+        if self.pending.is_none() {
+            return;
+        }
+        let modal = egui::Modal::new(egui::Id::new("discard_changes")).show(ui.ctx(), |ui| {
+            ui.set_width(320.0);
+            ui.heading("Unsaved changes");
+            ui.label("The current project has unsaved changes.");
+            ui.add_space(8.0);
+            let mut choice = None;
+            ui.horizontal(|ui| {
+                if ui.button("Save").clicked() {
+                    choice = Some(0);
+                }
+                if ui.button("Don't save").clicked() {
+                    choice = Some(1);
+                }
+                if ui.button("Cancel").clicked() {
+                    choice = Some(2);
+                }
+            });
+            choice
         });
+        let choice = if modal.should_close() { Some(2) } else { modal.inner };
+        match choice {
+            Some(0) => {
+                self.save(false);
+                if !self.is_modified()
+                    && let Some(a) = self.pending.take()
+                {
+                    self.run(a);
+                }
+            }
+            Some(1) => {
+                if let Some(a) = self.pending.take() {
+                    self.run(a);
+                }
+            }
+            Some(_) => self.pending = None,
+            None => {}
+        }
+    }
+
+    fn update_title(&self, ctx: &egui::Context) {
+        let name = self
+            .project_path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map_or_else(|| self.mesh.name.clone(), |n| n.to_string_lossy().into_owned());
+        let star = if self.is_modified() { "*" } else { "" };
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!("{name}{star} — Stylized3DPaint")));
     }
 }
 
-fn sanitize(name: &str) -> String {
+pub fn sanitize(name: &str) -> String {
     name.chars().map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' }).collect()
 }
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && self.is_modified() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.pending = Some(PendingAction::Quit);
+        }
+        if self.allow_close {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         let dropped =
             ui.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).find(|p| !p.as_os_str().is_empty()));
         if let Some(path) = dropped {
-            self.open(path);
+            self.open_path(path);
         }
         self.handle_shortcuts(ui);
-        egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
-        egui::Panel::bottom("status").show(ui, |ui| ui.label(&self.status));
-        egui::Panel::left("side").default_size(270.0).resizable(true).show(ui, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| self.side_panel(ui));
-        });
+        self.update_title(&ctx);
+
+        egui::Panel::top("menu").frame(egui::Frame::new().fill(theme::DOCK).inner_margin(egui::Margin::symmetric(6, 3))).show(ui, |ui| ui_panels::menu_bar(self, ui));
+        egui::Panel::top("options")
+            .exact_size(34.0)
+            .frame(egui::Frame::new().fill(theme::CHROME).inner_margin(egui::Margin::symmetric(8, 4)))
+            .show(ui, |ui| ui_panels::options_bar(self, ui));
+        egui::Panel::bottom("status")
+            .frame(egui::Frame::new().fill(theme::DOCK).inner_margin(egui::Margin::symmetric(8, 3)))
+            .show(ui, |ui| ui_panels::status_bar(self, ui));
+        egui::Panel::left("tools")
+            .exact_size(44.0)
+            .resizable(false)
+            .frame(egui::Frame::new().fill(theme::CHROME).inner_margin(egui::Margin::symmetric(4, 6)))
+            .show(ui, |ui| ui_panels::toolbar(self, ui));
+        egui::Panel::right("dock")
+            .default_size(310.0)
+            .size_range(260.0..=520.0)
+            .resizable(true)
+            .frame(egui::Frame::new().fill(theme::DOCK).inner_margin(egui::Margin::same(0)))
+            .show(ui, |ui| ui_panels::dock(self, ui));
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| self.viewport_ui(ui));
+        self.confirm_dialog(ui);
     }
 }

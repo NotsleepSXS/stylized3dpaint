@@ -1,9 +1,9 @@
-// Copies the paint texture to the display texture, pushing island borders
+// Copies a composited channel to its display texture, pushing island borders
 // outwards into empty UV space so bilinear/mip sampling has no seams.
 
 const RADIUS: i32 = 6;
 
-@group(0) @binding(0) var paint: texture_2d<f32>;
+@group(0) @binding(0) var src: texture_2d<f32>;
 @group(0) @binding(1) var coverage: texture_2d<f32>;
 
 @vertex
@@ -16,9 +16,9 @@ fn vs_full(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
 fn fs_dilate(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let xy = vec2<i32>(pos.xy);
     if (textureLoad(coverage, xy, 0).r > 0.5) {
-        return textureLoad(paint, xy, 0);
+        return textureLoad(src, xy, 0);
     }
-    let last = vec2<i32>(textureDimensions(paint)) - 1;
+    let last = vec2<i32>(textureDimensions(src)) - 1;
     var best = vec4<f32>(0.0);
     var best_d = 1e9;
     for (var dy = -RADIUS; dy <= RADIUS; dy = dy + 1) {
@@ -27,7 +27,7 @@ fn fs_dilate(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             let d = f32(dx * dx + dy * dy);
             if (d < best_d && textureLoad(coverage, q, 0).r > 0.5) {
                 best_d = d;
-                best = textureLoad(paint, q, 0);
+                best = textureLoad(src, q, 0);
             }
         }
     }

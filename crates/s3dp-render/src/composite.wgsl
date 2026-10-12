@@ -1,9 +1,11 @@
-// Applies the accumulated stroke mask on top of the pre-stroke texture.
-// Paint textures store premultiplied sRGB-encoded color.
+// Applies the accumulated stroke mask on top of the pre-stroke layer texture.
+// Color channels: Rgba8 premultiplied (sRGB-encoded rgb, a).
+// Scalar channels: Rg8 premultiplied (value, a). Masks: R8 straight.
 
 struct CompositeParams {
-    color: vec4<f32>,
-    // x: opacity, y: erase (0/1)
+    // rgb: brush value for this channel (sRGB-encoded / scalar in r)
+    value: vec4<f32>,
+    // x: opacity, y: mode (0 color, 1 scalar, 2 erase, 3 mask)
     params: vec4<f32>,
 };
 
@@ -22,8 +24,15 @@ fn fs_composite(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let xy = vec2<i32>(pos.xy);
     let dst = textureLoad(before, xy, 0);
     let m = clamp(textureLoad(mask, xy, 0).r * c.params.x, 0.0, 1.0);
-    if (c.params.y > 0.5) {
+    let mode = u32(c.params.y);
+    if (mode == 2u) {
         return dst * (1.0 - m);
     }
-    return vec4<f32>(c.color.rgb, 1.0) * m + dst * (1.0 - m);
+    if (mode == 1u) {
+        return vec4<f32>(c.value.r * m + dst.r * (1.0 - m), m + dst.g * (1.0 - m), 0.0, 0.0);
+    }
+    if (mode == 3u) {
+        return vec4<f32>(mix(dst.r, c.value.r, m));
+    }
+    return vec4<f32>(c.value.rgb, 1.0) * m + dst * (1.0 - m);
 }
