@@ -40,8 +40,8 @@ fn effect(c: Ctx) -> vec4<f32> {
         o = vec3<f32>(wnoise(c.p, c.n, 0.0, p_octaves()), wnoise(c.p, c.n, 1.0, p_octaves()), wnoise(c.p, c.n, 2.0, p_octaves())) * 2.0 - 1.0;
     }
     o = (o - c.n * dot(o, c.n)) * p_intensity() * radius();
-    let here = vec2<f32>(c.xy);
-    let dest = here + to_texels(jacobian(c.xy), o);
-    if (!covered(vec2<i32>(round(dest)))) { return c.src; }
-    return sample_src_px(dest);
+    // Seam-aware (continues across UV seams in seamless mode).
+    let dest = surface_px(c.xy, c.p, o);
+    if (dest.z < 0.5) { return c.src; }
+    return sample_src_px(dest.xy);
 }

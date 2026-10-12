@@ -44,9 +44,10 @@ fn effect(c: Ctx) -> vec4<f32> {
         let u = lk_up(n);
         let ul = length(u);
         if (ul < 0.05) { break; }
-        fxy = fxy + to_texels(jacobian(xy), u / ul * dt);
+        let step = surface_px_f(fxy, pos, u / ul * dt);
+        if (step.z < 0.5) { break; }
+        fxy = step.xy;
         let nxy = vec2<i32>(round(fxy));
-        if (!covered(nxy)) { break; }
         let wp = world(nxy);
         // Stop at UV seams / jumps to another part of the mesh.
         if (distance(wp, pos) > dt * 3.0 + texel_world(xy) * 2.0) { break; }

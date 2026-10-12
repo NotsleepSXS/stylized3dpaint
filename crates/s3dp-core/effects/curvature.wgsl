@@ -40,11 +40,11 @@ fn effect(c: Ctx) -> vec4<f32> {
             for (var k = 0; k < count; k = k + 1) {
                 let a = (f32(k) + 0.5 * f32(r & 1)) / f32(count) * 2.0 * PI;
                 let o = (fr[0] * cos(a) + fr[1] * sin(a)) * rr;
-                let ixy = vec2<i32>(round(vec2<f32>(c.xy) + to_texels(j, o)));
-                if (!covered(ixy)) { continue; }
+                let tap = surface_px(c.xy, c.p, o);
+                if (tap.z < 0.5) { continue; }
+                let ixy = vec2<i32>(round(tap.xy));
                 let wp = world(ixy);
                 let dp = wp - c.p;
-                if (length(dp) > rr * 2.0 + tw * 2.0) { continue; }
                 let w = exp(-2.0 * (rr / rad) * (rr / rad));
                 sum = sum + cv_sample(ixy) * w;
                 wsum = wsum + w;

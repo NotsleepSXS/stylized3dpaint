@@ -21,7 +21,7 @@ struct Uniforms {
     info: vec4<u32>,
     // x: blend mode, y: opacity, z: anchor0 bound, w: anchor1 bound
     blend: vec4<f32>,
-    // x: object radius, y: seed, z: time-independent salt, w: unused
+    // x: object radius, y: seed, z: time-independent salt, w: seamless (follow UV seam links)
     scale: vec4<f32>,
     bbox_min: vec4<f32>,
     bbox_size: vec4<f32>,
@@ -41,6 +41,7 @@ struct Uniforms {
 @group(0) @binding(11) var map_normal: texture_2d<f32>;  // baked tangent-space normal, encoded 0..1
 @group(0) @binding(12) var anchor_tex0: texture_2d<f32>;
 @group(0) @binding(13) var anchor_tex1: texture_2d<f32>;
+@group(0) @binding(14) var seam_link_tex: texture_2d<f32>; // texel across the UV seam, -1 = none (not filterable)
 
 const PI: f32 = 3.14159265;
 
@@ -128,6 +129,75 @@ fn to_texels(j: mat2x3<f32>, o: vec3<f32>) -> vec2<f32> {
     if (abs(det) < 1e-24) { return vec2<f32>(0.0); }
     let r = vec2<f32>(dot(j[0], o), dot(j[1], o));
     return vec2<f32>(c * r.x - b * r.y, a * r.y - b * r.x) / det;
+}
+
+// ---------------------------------------------------------------- seam-aware neighbours
+
+/// Seamless mode: neighbour lookups continue across UV seams via the seam links.
+fn seamless() -> bool { return U.scale.w > 0.5; }
+
+/// Texel on the other side of the seam for a border texel (x < 0: none).
+fn seam_link(xy: vec2<i32>) -> vec2<i32> {
+    let l = textureLoad(seam_link_tex, clamp(xy, vec2<i32>(0), tex_size() - 1), 0).xy;
+    return vec2<i32>(round(l));
+}
+
+/// A linked border texel at or around `b` (within 2 texels), or x < 0.
+fn find_link(b: vec2<i32>) -> vec4<i32> {
+    var best = vec4<i32>(-1);
+    var best_d = 99;
+    for (var y = -2; y <= 2; y = y + 1) {
+        for (var x = -2; x <= 2; x = x + 1) {
+            let q = b + vec2<i32>(x, y);
+            if (!covered(q)) { continue; }
+            let l = seam_link(q);
+            let d = abs(x) + abs(y);
+            if (l.x >= 0 && d < best_d) {
+                best_d = d;
+                best = vec4<i32>(q, l);
+            }
+        }
+    }
+    return best;
+}
+
+/// Texel position of the surface point `p + o` seen from the (fractional) texel `start` whose
+/// world position is `p`; `o` is a world offset (tangent to the surface). Returns
+/// (px.x, px.y, ok). In UV mode only the island of `start` is used (ok = 0 when the offset
+/// leaves it); in seamless mode the lookup jumps across the UV seam through the seam links.
+fn surface_px_f(start: vec2<f32>, p: vec3<f32>, o: vec3<f32>) -> vec3<f32> {
+    let sxy = vec2<i32>(round(start));
+    let j = jacobian(sxy);
+    let tw = texel_world(sxy);
+    let len = length(o);
+    let px = start + to_texels(j, o);
+    let ixy = vec2<i32>(round(px));
+    if (covered(ixy) && distance(world(ixy), p) <= len * 2.0 + tw * 2.0) { return vec3<f32>(px, 1.0); }
+    if (!seamless()) { return vec3<f32>(px, 0.0); }
+    // Last texel of our island along the way (binary search).
+    var lo = 0.0;
+    var hi = 1.0;
+    for (var i = 0; i < 7; i = i + 1) {
+        let mid = 0.5 * (lo + hi);
+        let m = vec2<i32>(round(mix(start, px, mid)));
+        if (covered(m) && distance(world(m), p) <= len * mid * 2.0 + tw * 2.0) { lo = mid; } else { hi = mid; }
+    }
+    let b = vec2<i32>(round(mix(start, px, lo)));
+    let link = find_link(b);
+    if (link.x < 0) { return vec3<f32>(px, 0.0); }
+    // Continue the rest of the offset on the other side, in its own UV frame.
+    let target_p = p + o;
+    let rest = target_p - world(link.xy);
+    let px2 = vec2<f32>(link.zw) + to_texels(jacobian(link.zw), rest);
+    let i2 = vec2<i32>(round(px2));
+    if (covered(i2) && distance(world(i2), target_p) <= length(rest) * 0.75 + tw * 3.0) { return vec3<f32>(px2, 1.0); }
+    // Overshot the other island too (corner, tiny island): stop right across the seam.
+    if (length(rest) <= tw * 3.0) { return vec3<f32>(vec2<f32>(link.zw), 1.0); }
+    return vec3<f32>(px, 0.0);
+}
+
+fn surface_px(xy: vec2<i32>, p: vec3<f32>, o: vec3<f32>) -> vec3<f32> {
+    return surface_px_f(vec2<f32>(xy), p, o);
 }
 
 /// Size of one texel in world units (average of both directions).
@@ -297,7 +367,6 @@ fn balance_contrast(v: f32, balance: f32, contrast: f32) -> f32 {
 /// by testing world distance).
 fn blur_world(c: Ctx, radius_world: f32) -> vec4<f32> {
     if (radius_world <= 0.0) { return c.src; }
-    let j = jacobian(c.xy);
     let fr = basis(c.n);
     var sum = vec4<f32>(0.0);
     var wsum = 0.0;
@@ -308,13 +377,11 @@ fn blur_world(c: Ctx, radius_world: f32) -> vec4<f32> {
         for (var k = 0; k < count; k = k + 1) {
             let a = (f32(k) + 0.5 * f32(r & 1)) / f32(count) * 2.0 * PI;
             let o = (fr[0] * cos(a) + fr[1] * sin(a)) * rr;
-            let px = vec2<f32>(c.xy) + to_texels(j, o);
-            let ixy = vec2<i32>(round(px));
-            if (!covered(ixy)) { continue; }
-            // Reject samples that jumped to another part of the mesh.
-            if (distance(world(ixy), c.p) > rr * 2.0 + texel_world(c.xy) * 2.0) { continue; }
+            // Seam-aware: continues across UV seams in seamless mode.
+            let t = surface_px(c.xy, c.p, o);
+            if (t.z < 0.5) { continue; }
             let w = exp(-2.0 * (rr / radius_world) * (rr / radius_world));
-            sum = sum + sample_src_px(px) * w;
+            sum = sum + sample_src_px(t.xy) * w;
             wsum = wsum + w;
         }
     }

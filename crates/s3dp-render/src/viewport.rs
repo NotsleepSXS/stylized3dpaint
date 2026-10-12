@@ -294,6 +294,7 @@ impl Viewport {
         self.paint.set_mesh(device, queue, mesh, &self.view_layout, texture_size);
         let scale = self.paint.scale;
         self.baker.rasterize_geometry(device, queue, &self.paint.sets, &vertices, &indices, scale.bbox_min, scale.bbox_size);
+        self.paint.build_seam_links(device, queue);
         self.paint.baked_changed();
         self.bake = None;
         self.mesh = Some(GpuMesh { vertices, indices, index_count: mesh.indices.len() as u32 });

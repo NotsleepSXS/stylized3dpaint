@@ -133,6 +133,8 @@ pub struct TextureSet {
     /// World position (w = coverage) and normal per texel.
     pub geo_pos: wgpu::Texture,
     pub geo_nrm: wgpu::Texture,
+    /// UV seam links (texel on the other side of the seam, -1 = none), Rg32Float.
+    pub seam_link: wgpu::Texture,
     /// Group 1 of the viewport shader.
     pub(crate) view_bg: Option<wgpu::BindGroup>,
 }
@@ -426,7 +428,8 @@ impl Painter {
                 finals: HashMap::new(),
                 display: HashMap::new(),
                 baked,
-                geo_pos: gpu::texture(device, "geometry position", size, wgpu::TextureFormat::Rgba32Float, U::RENDER_ATTACHMENT | U::TEXTURE_BINDING),
+                geo_pos: gpu::texture(device, "geometry position", size, wgpu::TextureFormat::Rgba32Float, U::RENDER_ATTACHMENT | U::TEXTURE_BINDING | U::COPY_SRC),
+                seam_link: gpu::texture(device, "seam links", size, wgpu::TextureFormat::Rg32Float, U::TEXTURE_BINDING | U::COPY_DST),
                 geo_nrm: gpu::texture(device, "geometry normal", size, wgpu::TextureFormat::Rgba16Float, U::RENDER_ATTACHMENT | U::TEXTURE_BINDING),
                 view_bg: None,
             });
@@ -527,6 +530,26 @@ impl Painter {
     }
 
     /// Baked maps or geometry changed: generators must recompute.
+    /// Computes the UV seam links of every texture set from its rasterized geometry (once per
+    /// mesh / texture size; CPU, after `rasterize_geometry`).
+    pub fn build_seam_links(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        let t = std::time::Instant::now();
+        for set in &self.sets {
+            let Some(bytes) = gpu::read_texture(device, queue, &set.geo_pos) else { continue };
+            let pos: &[[f32; 4]] = bytemuck::cast_slice(&bytes);
+            let n = set.size as usize;
+            let links = s3dp_core::seams::seam_links(pos, n, n);
+            queue.write_texture(
+                set.seam_link.as_image_copy(),
+                bytemuck::cast_slice(&links),
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(set.size * 8), rows_per_image: None },
+                wgpu::Extent3d { width: set.size, height: set.size, depth_or_array_layers: 1 },
+            );
+        }
+        log::info!("seam links for {} texture set(s) in {:?}", self.sets.len(), t.elapsed());
+        self.mark_all_dirty();
+    }
+
     pub fn baked_changed(&mut self) {
         self.baked_revision += 1;
         self.mark_all_dirty();
@@ -1489,7 +1512,7 @@ impl Painter {
                 self.run_generator_blurred(device, encoder, def, e, target, input.as_ref().unwrap_or(&cur), &dst, si, &anchors, g_blur)
             } else {
                 let set = &self.sets[si];
-                let inputs = EffectInputs { geo_pos: &set.geo_pos, geo_nrm: &set.geo_nrm, baked: &set.baked, scale: self.scale };
+                let inputs = EffectInputs { geo_pos: &set.geo_pos, geo_nrm: &set.geo_nrm, seam_link: &set.seam_link, baked: &set.baked, scale: self.scale };
                 self.engine.run(device, encoder, def, e, target, input.as_ref().unwrap_or(&cur), &dst, &inputs, [anchors[0].as_ref(), anchors[1].as_ref()])
             };
             if let Some(d) = input {
@@ -1544,7 +1567,7 @@ impl Painter {
         blur.blend = BlendMode::Replace;
         let result = {
             let set = &self.sets[si];
-            let inputs = EffectInputs { geo_pos: &set.geo_pos, geo_nrm: &set.geo_nrm, baked: &set.baked, scale: self.scale };
+            let inputs = EffectInputs { geo_pos: &set.geo_pos, geo_nrm: &set.geo_nrm, seam_link: &set.seam_link, baked: &set.baked, scale: self.scale };
             self.engine
                 .run(device, encoder, def, &plain, target, src, &raw, &inputs, [anchors[0].as_ref(), anchors[1].as_ref()])
                 .and_then(|_| {

@@ -25,8 +25,9 @@ fn effect(c: Ctx) -> vec4<f32> {
             let rr = f32(r) * 0.5 * rad;
             for (var k = 0; k < 6 * r; k = k + 1) {
                 let a = (f32(k) + 0.5 * f32(r & 1)) / f32(6 * r) * 2.0 * PI;
-                let ixy = vec2<i32>(round(vec2<f32>(c.xy) + to_texels(j, (fr[0] * cos(a) + fr[1] * sin(a)) * rr)));
-                if (!covered(ixy) || distance(world(ixy), c.p) > rr * 2.0 + tw * 2.0) { continue; }
+                let tap = surface_px(c.xy, c.p, (fr[0] * cos(a) + fr[1] * sin(a)) * rr);
+                if (tap.z < 0.5) { continue; }
+                let ixy = vec2<i32>(round(tap.xy));
                 v = max(v, cd_sample(ixy) * (1.0 - 0.4 * f32(r) * 0.5));
             }
         }

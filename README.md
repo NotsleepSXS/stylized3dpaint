@@ -61,6 +61,9 @@ Supported model formats: glTF/GLB, FBX, OBJ.
   stylization (Stylization master filter, toon shading, posterize, palette lock, gradient map,
   edge highlight, cavity darken, hue shift by light), each with Light / Medium / Strong / Stylized presets
 - Layer tree with folders, effect layers, anchors and per-channel blending
+- **Seamless (3D) mode** for every effect that reads neighbouring texels (blur, warp, slope blur, edge wear, AO, curvature, Stylization…): lookups continue across UV seams through precomputed seam links (on by default)
+
+  ![UV vs seamless slope blur across a UV seam](docs/images/seamless_uv_vs_3d.png)
 - **Native Wayland pen tablet** support (`zwp_tablet_v2`): pressure → size / flow, eraser end, barrel buttons
 - `.s3dp` project files (zip: mesh + layer PNGs + baked maps + JSON)
 - Export presets: Unreal (ORM / separate), Unity URP / HDRP, Godot, glTF, Stylized Unlit,

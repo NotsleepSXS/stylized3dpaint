@@ -221,7 +221,22 @@ impl EffectDef {
         if self.category.is_generator() {
             out.extend(generator_common_params());
         }
+        if self.reads_neighbors() {
+            out.push(seamless_param());
+        }
         out
+    }
+
+    /// Parameters that get a uniform slot and a `p_<id>()` accessor (all but the seamless
+    /// switch, which the shader reads through `seamless()`).
+    pub fn shader_params(&self) -> Vec<ParamDef> {
+        self.all_params().into_iter().filter(|p| p.id != SEAMLESS_PARAM).collect()
+    }
+
+    /// Reads neighbouring surface texels (blur, warp, edge growth, ...): such effects get the
+    /// shared "Seamless (3D)" parameter that lets them continue across UV seams.
+    pub fn reads_neighbors(&self) -> bool {
+        self.neighbors || self.wgsl.contains("surface_px") || self.wgsl.contains("blur_world")
     }
 
     /// Instance with default parameter values.
@@ -262,6 +277,23 @@ impl EffectDef {
 }
 
 /// Shared generator parameters (spec §3): global invert / balance / contrast / blur, seed, grunge.
+/// Shared parameter of effects that read neighbours: follow UV seam links (default on).
+pub fn seamless_param() -> ParamDef {
+    ParamDef {
+        id: SEAMLESS_PARAM.into(),
+        label: "Seamless (3D)".into(),
+        label_ru: Some("Бесшовно (3D)".into()),
+        kind: ParamKind::Bool { default: true },
+        group: None,
+        group_ru: None,
+        tip: Some("Continue across UV seams (neighbours are found on the surface in 3D). Off: work in UV space only, faster, seams may show.".into()),
+        tip_ru: Some("Продолжать через швы развёртки (соседи ищутся по поверхности в 3D). Выкл.: только в UV, быстрее, швы могут быть видны.".into()),
+    }
+}
+
+/// Id of [`seamless_param`].
+pub const SEAMLESS_PARAM: &str = "seamless";
+
 pub fn generator_common_params() -> Vec<ParamDef> {
     let f = |id: &str, label: &str, ru: &str, min: f32, max: f32, default: f32, group: &str, group_ru: &str| ParamDef {
         id: id.into(),
@@ -377,7 +409,7 @@ mod tests {
         let r = registry();
         assert!(!r.effects.is_empty());
         for d in &r.effects {
-            assert!(d.all_params().len() <= 48, "{}: too many parameters", d.id);
+            assert!(d.shader_params().len() <= 48, "{}: too many parameters", d.id);
             assert!(d.wgsl.contains("fn effect("), "{}: shader must define fn effect", d.id);
             let ids: std::collections::HashSet<_> = d.all_params().iter().map(|p| p.id.clone()).collect();
             assert_eq!(ids.len(), d.all_params().len(), "{}: duplicate parameter ids", d.id);

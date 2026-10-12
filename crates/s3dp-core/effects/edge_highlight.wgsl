@@ -26,8 +26,8 @@ fn effect(c: Ctx) -> vec4<f32> {
         let fr = basis(c.n);
         let wv = vec2<f32>(fbm01(c.p, bs, 3, seed()) - 0.5, fbm01(c.p, bs, 3, seed() + 19u) - 0.5) * 2.0;
         let o = (fr[0] * wv.x + fr[1] * wv.y) * bs * 0.35 * br;
-        let wxy = vec2<i32>(round(vec2<f32>(c.xy) + to_texels(jacobian(c.xy), o)));
-        if (covered(wxy) && distance(world(wxy), c.p) < bs + texel_world(c.xy) * 2.0) { xy = wxy; }
+        let tap = surface_px(c.xy, c.p, o);
+        if (tap.z > 0.5) { xy = vec2<i32>(round(tap.xy)); }
     }
     var e = eh_edge(xy);
     if (br > 0.0) {

@@ -34,9 +34,9 @@ fn wr_edges(xy: vec2<i32>, p: vec3<f32>, n: vec3<f32>) -> f32 {
             for (var k = 0; k < 8; k = k + 1) {
                 let a = (f32(k) + 0.5 * f32(r & 1)) / 8.0 * 2.0 * PI;
                 let o = (fr[0] * cos(a) + fr[1] * sin(a)) * rr;
-                let ixy = vec2<i32>(round(vec2<f32>(xy) + to_texels(j, o)));
-                if (!covered(ixy)) { continue; }
-                if (distance(world(ixy), p) > rr * 2.0 + tw * 2.0) { continue; }
+                let tap = surface_px(xy, p, o);
+                if (tap.z < 0.5) { continue; }
+                let ixy = vec2<i32>(round(tap.xy));
                 let e = wear_src(ixy);
                 mx = max(mx, e * (1.0 - t * t * 0.75));
                 sum = sum + e;
@@ -117,9 +117,10 @@ fn wr_rim(c: Ctx, v: f32) -> vec2<f32> {
     if (length(up) < 0.05) { up = basis(c.n)[1]; }
     let tw = texel_world(c.xy);
     let stp = max(p_chip_size() * radius() * 0.5, tw * 2.0);
-    let ixy = vec2<i32>(round(vec2<f32>(c.xy) + to_texels(jacobian(c.xy), normalize(up) * stp)));
+    let tap = surface_px(c.xy, c.p, normalize(up) * stp);
+    let ixy = vec2<i32>(round(tap.xy));
     var side = 1.0;
-    if (covered(ixy) && distance(world(ixy), c.p) < stp * 3.0 + tw * 2.0) {
+    if (tap.z > 0.5) {
         side = select(1.0, 0.0, wr_value(ixy, world(ixy), world_normal(ixy)) > v);
     }
     return vec2<f32>(band, side);

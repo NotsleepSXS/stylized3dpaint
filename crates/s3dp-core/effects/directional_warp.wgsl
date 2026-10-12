@@ -40,9 +40,10 @@ fn effect(c: Ctx) -> vec4<f32> {
     var count = 1.0;
     for (var i = 0; i < steps; i = i + 1) {
         let d = along - wn * dot(along, wn);
-        let next = pos + to_texels(jacobian(vec2<i32>(round(pos))), d * step_len);
+        let step = surface_px_f(pos, world(vec2<i32>(round(pos))), d * step_len);
+        if (step.z < 0.5) { break; }
+        let next = step.xy;
         let ixy = vec2<i32>(round(next));
-        if (!covered(ixy)) { break; }
         pos = next;
         wn = world_normal(ixy);
         let v = sample_src_px(pos);

@@ -52,8 +52,9 @@ fn sm_strokes(c: Ctx) -> StrokeOut {
                 let cs = center - c.n * hgt;
                 // Normal at the stroke center (falls back to ours when it maps off the island).
                 var ns = c.n;
-                let cxy = vec2<i32>(round(vec2<f32>(c.xy) + to_texels(j, cs - c.p)));
-                if (covered(cxy) && distance(world(cxy), cs) < g * 0.5 + tw * 2.0) { ns = world_normal(cxy); }
+                let ct_px = surface_px(c.xy, c.p, cs - c.p);
+                let cxy = vec2<i32>(round(ct_px.xy));
+                if (ct_px.z > 0.5 && distance(world(cxy), cs) < g * 0.5 + tw * 2.0) { ns = world_normal(cxy); }
                 let facing = dot(ns, c.n);
                 let nf = smoothstep(ct - 0.08, ct + 0.02, facing);
                 if (nf <= 0.0) { continue; }
@@ -76,11 +77,11 @@ fn sm_strokes(c: Ctx) -> StrokeOut {
                 var cnt = 0.0;
                 for (var k = -2; k <= 2; k = k + 1) {
                     let wp = cs + d * (f32(k) * 0.4 * hl);
-                    let px = vec2<f32>(c.xy) + to_texels(j, wp - c.p);
-                    let ixy = vec2<i32>(round(px));
-                    if (!covered(ixy)) { continue; }
+                    let tap = surface_px(c.xy, c.p, wp - c.p);
+                    if (tap.z < 0.5) { continue; }
+                    let ixy = vec2<i32>(round(tap.xy));
                     if (distance(world(ixy), wp) > hl * 0.5 + tw * 2.0) { continue; }
-                    sum = sum + sample_src_px(px).rgb;
+                    sum = sum + sample_src_px(tap.xy).rgb;
                     cnt = cnt + 1.0;
                 }
                 if (cnt < 0.5) { continue; }
@@ -120,9 +121,9 @@ fn sm_edge_cav(c: Ctx) -> vec2<f32> {
         let count = select(1, r * 6, r > 0);
         for (var k = 0; k < count; k = k + 1) {
             let a = (f32(k) + 0.5 * f32(r & 1)) / f32(count) * 2.0 * PI;
-            let ixy = vec2<i32>(round(vec2<f32>(c.xy) + to_texels(j, (fr[0] * cos(a) + fr[1] * sin(a)) * rr)));
-            if (!covered(ixy)) { continue; }
-            if (distance(world(ixy), c.p) > rr * 2.0 + tw * 2.0) { continue; }
+            let tap = surface_px(c.xy, c.p, (fr[0] * cos(a) + fr[1] * sin(a)) * rr);
+            if (tap.z < 0.5) { continue; }
+            let ixy = vec2<i32>(round(tap.xy));
             let kv = curvature(ixy);
             let v = vec2<f32>(max(edges(ixy), clamp((kv - 0.5) * 2.0, 0.0, 1.0)), max(cavity(ixy), clamp((0.5 - kv) * 2.0, 0.0, 1.0)));
             // Max-ish accumulation so spread widens instead of fading.

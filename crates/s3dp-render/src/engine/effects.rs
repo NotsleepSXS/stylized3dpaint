@@ -49,6 +49,8 @@ impl Default for MeshScale {
 pub struct EffectInputs<'a> {
     pub geo_pos: &'a wgpu::Texture,
     pub geo_nrm: &'a wgpu::Texture,
+    /// UV seam links (Rg32Float, see `s3dp_core::seams`).
+    pub seam_link: &'a wgpu::Texture,
     /// Indexed by `BakedMap::index`.
     pub baked: &'a [wgpu::Texture],
     pub scale: MeshScale,
@@ -188,7 +190,7 @@ fn fs_dilate(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 pub fn effect_source(def: &EffectDef) -> String {
     let mut s = String::from(include_str!("prelude.wgsl"));
     s.push_str("\n// ---- generated parameter accessors ----\n");
-    for (slot, p) in def.all_params().iter().enumerate() {
+    for (slot, p) in def.shader_params().iter().enumerate() {
         s.push_str(&p.wgsl_accessor(slot));
     }
     if def.category.is_generator() {
@@ -231,6 +233,7 @@ impl EffectEngine {
         for b in 4..=13 {
             entries.push(tex_layout(b, true));
         }
+        entries.push(tex_layout(14, false));
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("effect"), entries: &entries });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("effect"),
@@ -355,6 +358,7 @@ impl EffectEngine {
             baked(BakedMap::Normal),
             anchors[0].map(gpu::view).unwrap_or_else(|| dummy.clone()),
             anchors[1].map(gpu::view).unwrap_or_else(|| dummy.clone()),
+            gpu::view(inputs.seam_link),
         ];
         let mut entries = vec![
             wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() },
@@ -391,7 +395,7 @@ impl EffectEngine {
             bbox_size: [inputs.scale.bbox_size[0], inputs.scale.bbox_size[1], inputs.scale.bbox_size[2], 0.0],
         };
         let mut anchor_slot = 0;
-        for (slot, p) in def.all_params().iter().enumerate().take(PARAM_SLOTS) {
+        for (slot, p) in def.shader_params().iter().enumerate().take(PARAM_SLOTS) {
             let v = def.value(effect, p);
             u.params[slot] = match (&p.kind, &v) {
                 (_, ParamValue::Color(c)) | (_, ParamValue::Vec3(c)) => [c[0], c[1], c[2], 0.0],
@@ -405,6 +409,10 @@ impl EffectEngine {
             if p.id == "seed" {
                 u.scale[1] = v.as_f32().max(0.0);
             }
+        }
+        // The seamless switch is read through `seamless()`, not a parameter slot.
+        if let Some(p) = def.all_params().iter().find(|p| p.id == s3dp_core::effect_def::SEAMLESS_PARAM) {
+            u.scale[3] = def.value(effect, p).as_f32();
         }
         u.blend[2] = anchors[0].is_some() as u32 as f32;
         u.blend[3] = anchors[1].is_some() as u32 as f32;
