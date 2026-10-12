@@ -139,10 +139,21 @@ pub fn menu_bar(app: &mut App, ui: &mut egui::Ui) {
             }
         });
         ui.menu_button("Layer", |ui| ui_layers::layer_menu(app, ui));
+        ui.menu_button("Bake", |ui| {
+            if ui.add(egui::Button::new(format!("{} Bake mesh maps…", icon::FIRE)).shortcut_text("Ctrl+B")).clicked() {
+                app.bake.open = true;
+                ui.close();
+            }
+        });
         ui.menu_button("View", |ui| {
             for (i, mode) in ShadingMode::ALL.into_iter().enumerate() {
                 ui.radio_value(&mut app.shading, mode, format!("{}   F{}", mode.label(), i + 1));
             }
+            ui.menu_button("Mesh maps", |ui| {
+                for map in s3dp_core::BakedMap::ALL {
+                    ui.radio_value(&mut app.shading, ShadingMode::Baked(map), map.label());
+                }
+            });
         });
         ui.menu_button("Help", |ui| {
             ui.label(RichText::new("Shortcuts").strong());
@@ -150,7 +161,7 @@ pub fn menu_bar(app: &mut App, ui: &mut egui::Ui) {
                 "B brush · E eraser · I eyedropper\n[ ] brush size · X swap colors · D default colors\n\
                  Alt+LMB / MMB orbit · RMB / Shift+MMB pan · Wheel zoom · F frame\n\
                  Ctrl+Z / Ctrl+Shift+Z undo / redo · Ctrl+J duplicate layer\n\
-                 Ctrl+Shift+N new layer · Del delete layer · F1–F8 viewport mode",
+                 Ctrl+Shift+N new layer · Del delete layer · F1–F8 viewport mode · Ctrl+B bake",
             );
         });
     });
@@ -251,7 +262,12 @@ fn percent(ui: &mut egui::Ui, value: &mut f32, min: f32) -> egui::Response {
 
 pub fn status_bar(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
-        ui.label(RichText::new(&app.status).color(theme::TEXT_DIM));
+        if let Some(p) = app.viewport.bake_progress() {
+            ui.add(egui::ProgressBar::new(p).desired_width(160.0).show_percentage());
+            ui.label(RichText::new("Baking mesh maps…").color(theme::TEXT_DIM));
+        } else {
+            ui.label(RichText::new(&app.status).color(theme::TEXT_DIM));
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let mut size = app.texture_size;
             egui::ComboBox::from_id_salt("texture_size")

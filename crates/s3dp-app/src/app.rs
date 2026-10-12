@@ -5,7 +5,7 @@ use anyhow::Context as _;
 use s3dp_core::{Channel, ChannelMask, ChannelValues, Mesh, OrbitCamera, import};
 use s3dp_render::{Brush, ShadingMode, Viewport, wgpu};
 
-use crate::{project, theme, ui_layers, ui_panels};
+use crate::{project, theme, ui_bake, ui_layers, ui_panels};
 
 pub const TEXTURE_SIZES: [u32; 3] = [1024, 2048, 4096];
 
@@ -89,6 +89,7 @@ pub struct App {
     pending: Option<PendingAction>,
     allow_close: bool,
     pub picker: crate::color_picker::PickerState,
+    pub bake: ui_bake::BakeUi,
 }
 
 impl App {
@@ -120,6 +121,7 @@ impl App {
             pending: None,
             allow_close: false,
             picker: Default::default(),
+            bake: Default::default(),
         };
         app.set_mesh(Mesh::uv_sphere(64, 32));
         app.saved_revision = app.viewport.paint.revision();
@@ -148,6 +150,8 @@ impl App {
         self.last_dab = None;
         self.thumbs.clear();
         self.project_path = None;
+        self.bake.has_baked = false;
+        self.viewport.cancel_bake();
     }
 
     fn frame_mesh(&mut self) {
@@ -201,7 +205,11 @@ impl App {
     fn load_project(&mut self, path: &Path) {
         let rs = self.render_state.clone();
         match project::load(path, &mut self.viewport, &rs.device, &rs.queue) {
-            Ok(mesh) => {
+            Ok((mesh, bake)) => {
+                self.bake.has_baked = bake.is_some();
+                if let Some(settings) = bake {
+                    self.bake.settings = settings;
+                }
                 self.texture_size = self.viewport.texture_size();
                 self.mesh = mesh;
                 self.needs_frame = true;
@@ -259,7 +267,8 @@ impl App {
             }
         };
         let rs = &self.render_state;
-        match project::save(&path, &self.mesh, &self.viewport, &rs.device, &rs.queue) {
+        let bake = self.bake.has_baked.then(|| self.bake.settings.clone());
+        match project::save(&path, &self.mesh, &self.viewport, bake.as_ref(), &rs.device, &rs.queue) {
             Ok(()) => {
                 self.saved_revision = self.viewport.paint.revision();
                 self.status = format!("Saved {}", path.display());
@@ -465,6 +474,10 @@ impl App {
                                 for (i, mode) in ShadingMode::ALL.into_iter().enumerate() {
                                     ui.selectable_value(&mut self.shading, mode, format!("{}   F{}", mode.label(), i + 1));
                                 }
+                                ui.separator();
+                                for map in s3dp_core::BakedMap::ALL {
+                                    ui.selectable_value(&mut self.shading, ShadingMode::Baked(map), map.label());
+                                }
                             });
                     });
                 });
@@ -553,7 +566,8 @@ impl App {
         use egui::{Key, KeyboardShortcut as S, Modifiers as M};
         let cmd_shift = M::COMMAND | M::SHIFT;
         // More specific shortcuts first: consume_shortcut ignores extra modifiers.
-        let shortcuts: [(S, fn(&mut App)); 12] = [
+        let shortcuts: [(S, fn(&mut App)); 13] = [
+            (S::new(M::COMMAND, Key::B), |a| a.bake.open = true),
             (S::new(cmd_shift, Key::Z), App::redo),
             (S::new(M::COMMAND, Key::Y), App::redo),
             (S::new(M::COMMAND, Key::Z), App::undo),
@@ -710,6 +724,15 @@ impl eframe::App for App {
             .frame(egui::Frame::new().fill(theme::DOCK).inner_margin(egui::Margin::same(0)))
             .show(ui, |ui| ui_panels::dock(self, ui));
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| self.viewport_ui(ui));
+        ui_bake::bake_window(self, &ctx);
+        if self.viewport.take_bake_finished() {
+            self.bake.has_baked = true;
+            self.viewport.paint.touch();
+            self.status = "Mesh maps baked — see View › Mesh maps".into();
+        }
+        if self.viewport.bake_progress().is_some() {
+            ctx.request_repaint();
+        }
         self.confirm_dialog(ui);
     }
 }

@@ -1,8 +1,9 @@
 use egui_wgpu::wgpu;
 use glam::Mat4;
-use s3dp_core::{Channel, Mesh, OrbitCamera, Vertex};
+use s3dp_core::{BakeSettings, BakedMap, Channel, Mesh, OrbitCamera, Vertex};
 use wgpu::util::DeviceExt;
 
+use crate::bake::{BakeJob, Baker};
 use crate::paint::{Brush, Painter, SCENE_DEPTH_FORMAT};
 
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -21,9 +22,12 @@ pub enum ShadingMode {
     Metallic,
     Height,
     Emissive,
+    /// A baked mesh map.
+    Baked(BakedMap),
 }
 
 impl ShadingMode {
+    /// Material modes (F1–F8); baked maps are listed separately.
     pub const ALL: [ShadingMode; 8] = [
         Self::Lit,
         Self::Unlit,
@@ -35,6 +39,20 @@ impl ShadingMode {
         Self::Emissive,
     ];
 
+    fn gpu_id(self) -> u32 {
+        match self {
+            Self::Baked(m) => 100 + m.index() as u32,
+            Self::Lit => 0,
+            Self::Unlit => 1,
+            Self::UvChecker => 2,
+            Self::Normals => 3,
+            Self::Roughness => 4,
+            Self::Metallic => 5,
+            Self::Height => 6,
+            Self::Emissive => 7,
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Lit => "Lit",
@@ -45,6 +63,7 @@ impl ShadingMode {
             Self::Metallic => "Metallic",
             Self::Height => "Height",
             Self::Emissive => "Emissive",
+            Self::Baked(m) => m.label(),
         }
     }
 }
@@ -80,6 +99,9 @@ pub struct Viewport {
     pick_pipeline: wgpu::RenderPipeline,
     view_layout: wgpu::BindGroupLayout,
     pub paint: Painter,
+    baker: Baker,
+    bake: Option<BakeJob>,
+    bake_finished: bool,
     texture_size: u32,
     /// Camera and size of the last rendered frame (dabs are in its pixel space).
     last_frame: Option<(OrbitCamera, [u32; 2])>,
@@ -119,8 +141,9 @@ impl Viewport {
             layout: &bgl,
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() }],
         });
-        // One texture per channel, then the sampler.
-        let mut view_entries: Vec<wgpu::BindGroupLayoutEntry> = (0..Channel::COUNT as u32)
+        // One texture per channel, one per baked map, then the sampler.
+        let textures = (Channel::COUNT + BakedMap::COUNT) as u32;
+        let mut view_entries: Vec<wgpu::BindGroupLayoutEntry> = (0..textures)
             .map(|binding| wgpu::BindGroupLayoutEntry {
                 binding,
                 visibility: wgpu::ShaderStages::FRAGMENT,
@@ -133,7 +156,7 @@ impl Viewport {
             })
             .collect();
         view_entries.push(wgpu::BindGroupLayoutEntry {
-            binding: Channel::COUNT as u32,
+            binding: textures,
             visibility: wgpu::ShaderStages::FRAGMENT,
             ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
             count: None,
@@ -155,7 +178,7 @@ impl Viewport {
         let vertex_layout = wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Vertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2],
+            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4],
         };
         let depth_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("scene depth"),
@@ -239,6 +262,9 @@ impl Viewport {
             pick_pipeline,
             view_layout,
             paint: Painter::new(device),
+            baker: Baker::new(device),
+            bake: None,
+            bake_finished: false,
             texture_size: 2048,
             last_frame: None,
             globals,
@@ -317,6 +343,33 @@ impl Viewport {
         Some((t.size[0], t.size[1], data))
     }
 
+    /// Starts baking mesh maps for every texture set (advanced during `render`).
+    pub fn start_bake(&mut self, device: &wgpu::Device, low: &Mesh, high: Option<&Mesh>, settings: &BakeSettings) {
+        self.bake = Some(BakeJob::new(device, low, high, settings, self.texture_size, self.paint.sets.len()));
+    }
+
+    /// True once after a background bake completes.
+    pub fn take_bake_finished(&mut self) -> bool {
+        std::mem::take(&mut self.bake_finished)
+    }
+
+    pub fn cancel_bake(&mut self) {
+        self.bake = None;
+    }
+
+    /// Progress 0..1 of the running bake.
+    pub fn bake_progress(&self) -> Option<f32> {
+        self.bake.as_ref().map(|b| b.progress())
+    }
+
+    /// Bakes synchronously (tests).
+    pub fn bake_now(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, low: &Mesh, high: Option<&Mesh>, settings: &BakeSettings) {
+        let mut job = BakeJob::new(device, low, high, settings, self.texture_size, self.paint.sets.len());
+        if let Some(mesh) = &self.mesh {
+            job.run_to_end(device, queue, &self.baker, &self.paint.sets, &mesh.vertices, &mesh.indices);
+        }
+    }
+
     pub fn texture_size(&self) -> u32 {
         self.texture_size
     }
@@ -382,10 +435,17 @@ impl Viewport {
         let globals = Globals {
             view_proj: view_proj.to_cols_array_2d(),
             eye: camera.eye().extend(1.0).into(),
-            params: [mode as u32 as f32, 8.0, 0.0, 0.0],
+            params: [mode.gpu_id() as f32, 8.0, 0.0, 0.0],
         };
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
 
+        if let (Some(job), Some(mesh)) = (&mut self.bake, &self.mesh) {
+            job.step(device, queue, &self.baker, &self.paint.sets, &mesh.vertices, &mesh.indices, 4);
+            if job.is_done() {
+                self.bake = None;
+                self.bake_finished = true;
+            }
+        }
         let targets = self.targets.as_ref().unwrap();
         let mut encoder = device.create_command_encoder(&Default::default());
         if let Some(mesh) = &self.mesh {

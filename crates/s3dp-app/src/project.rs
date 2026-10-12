@@ -5,18 +5,20 @@
 //! mesh.bin                          vertices + indices (little-endian, see `write_mesh`)
 //! layers/<id>/<set>/<channel>.png   RGBA (colors, premultiplied) or LA (scalars, premultiplied)
 //! layers/<id>/<set>/mask.png        L
+//! baked/<set>/<map>.png              L (scalars), RGBA (normal), RGBA16 (world normal, position)
 //! ```
 
 use std::io::{Read, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use s3dp_core::{Channel, ChannelValues, Layer, Mesh, MeshPart, Vertex};
+use s3dp_core::{BakeSettings, BakedMap, Channel, ChannelValues, Layer, Mesh, MeshPart, Vertex};
 use s3dp_render::paint::{MASK_FORMAT, channel_format};
 use s3dp_render::{GpuLayer, LayerTextures, Viewport, gpu, wgpu};
 use serde::{Deserialize, Serialize};
 
-const FORMAT_VERSION: u32 = 1;
+/// 1: 32-byte vertices without tangents. 2: tangents, baked mesh maps.
+const FORMAT_VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize)]
 struct ProjectFile {
@@ -27,6 +29,9 @@ struct ProjectFile {
     defaults: ChannelValues,
     active_layer: usize,
     layers: Vec<Layer>,
+    /// Settings of the last bake; present when baked maps are stored.
+    #[serde(default)]
+    bake: Option<BakeSettings>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -52,7 +57,14 @@ fn png_bytes(data: &[u8], size: u32, color: image::ExtendedColorType) -> Result<
     Ok(out)
 }
 
-pub fn save(path: &Path, mesh: &Mesh, viewport: &Viewport, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<()> {
+pub fn save(
+    path: &Path,
+    mesh: &Mesh,
+    viewport: &Viewport,
+    bake: Option<&BakeSettings>,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> Result<()> {
     let paint = &viewport.paint;
     let project = ProjectFile {
         format: FORMAT_VERSION,
@@ -66,6 +78,7 @@ pub fn save(path: &Path, mesh: &Mesh, viewport: &Viewport, device: &wgpu::Device
         defaults: paint.defaults,
         active_layer: paint.active,
         layers: paint.layers.iter().map(|l| l.meta.clone()).collect(),
+        bake: bake.cloned(),
     };
 
     // Write to a temp file first so a failed save never destroys the old project.
@@ -97,13 +110,36 @@ pub fn save(path: &Path, mesh: &Mesh, viewport: &Viewport, device: &wgpu::Device
             }
         }
     }
+    if bake.is_some() {
+        for (si, set) in paint.sets.iter().enumerate() {
+            for map in BakedMap::ALL {
+                let t = &set.baked[map.index()];
+                let data = gpu::read_texture(device, queue, t).context("GPU readback failed")?;
+                let png = match t.format() {
+                    wgpu::TextureFormat::R8Unorm => png_bytes(&data, t.width(), image::ExtendedColorType::L8)?,
+                    wgpu::TextureFormat::Rgba16Float => {
+                        let halves: &[half::f16] = bytemuck::cast_slice(&data);
+                        let words: Vec<u8> = halves
+                            .iter()
+                            .flat_map(|h| ((h.to_f32().clamp(0.0, 1.0) * 65535.0).round() as u16).to_ne_bytes())
+                            .collect();
+                        png_bytes(&words, t.width(), image::ExtendedColorType::Rgba16)?
+                    }
+                    _ => png_bytes(&data, t.width(), image::ExtendedColorType::Rgba8)?,
+                };
+                zip.start_file(format!("baked/{si}/{}.png", map.file_name()), stored)?;
+                zip.write_all(&png)?;
+            }
+        }
+    }
     zip.finish()?;
     std::fs::rename(&tmp, path).with_context(|| format!("writing {}", path.display()))?;
     Ok(())
 }
 
-/// Loads a project: replaces the viewport mesh and layer stack. Returns the mesh.
-pub fn load(path: &Path, viewport: &mut Viewport, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Mesh> {
+/// Loads a project: replaces the viewport mesh and layer stack.
+/// Returns the mesh and the bake settings (when baked maps were restored).
+pub fn load(path: &Path, viewport: &mut Viewport, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(Mesh, Option<BakeSettings>)> {
     let file = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
     let mut zip = zip::ZipArchive::new(file).context("not a Stylized3DPaint project")?;
     let read = |zip: &mut zip::ZipArchive<std::fs::File>, name: &str| -> Result<Vec<u8>> {
@@ -116,7 +152,7 @@ pub fn load(path: &Path, viewport: &mut Viewport, device: &wgpu::Device, queue: 
     if project.format > FORMAT_VERSION {
         bail!("project was saved by a newer version (format {})", project.format);
     }
-    let mut mesh = read_mesh(&read(&mut zip, "mesh.bin")?)?;
+    let mut mesh = read_mesh(&read(&mut zip, "mesh.bin")?, project.format)?;
     mesh.name = project.mesh_name.clone();
     mesh.parts = project
         .parts
@@ -151,7 +187,37 @@ pub fn load(path: &Path, viewport: &mut Viewport, device: &wgpu::Device, queue: 
         layers.push(GpuLayer { meta, sets });
     }
     viewport.paint.load_document(layers, project.defaults, project.active_layer);
-    Ok(mesh)
+
+    let mut bake = project.bake;
+    if bake.is_some() {
+        for si in 0..mesh.parts.len() {
+            for map in BakedMap::ALL {
+                let name = format!("baked/{si}/{}.png", map.file_name());
+                if zip.index_for_name(&name).is_none() {
+                    bake = None;
+                    continue;
+                }
+                let img = image::load_from_memory(&read(&mut zip, &name)?)?;
+                let t = &viewport.paint.sets[si].baked[map.index()];
+                let data: Vec<u8> = match t.format() {
+                    wgpu::TextureFormat::R8Unorm => img.to_luma8().into_raw(),
+                    wgpu::TextureFormat::Rgba16Float => img
+                        .to_rgba16()
+                        .into_raw()
+                        .iter()
+                        .flat_map(|&w| half::f16::from_f32(w as f32 / 65535.0).to_le_bytes())
+                        .collect(),
+                    _ => img.to_rgba8().into_raw(),
+                };
+                let bpp = t.format().block_copy_size(None).unwrap_or(4) as usize;
+                if data.len() != (size * size) as usize * bpp {
+                    bail!("{name} has the wrong size");
+                }
+                gpu::write_full(queue, t, &data);
+            }
+        }
+    }
+    Ok((mesh, bake))
 }
 
 fn upload_checked(
@@ -178,22 +244,40 @@ fn write_mesh(w: &mut impl Write, mesh: &Mesh) -> Result<()> {
     Ok(())
 }
 
-fn read_mesh(bytes: &[u8]) -> Result<Mesh> {
+fn read_mesh(bytes: &[u8], format: u32) -> Result<Mesh> {
     let header = bytes.get(..8).context("mesh.bin is truncated")?;
     let vcount = u32::from_le_bytes(header[..4].try_into()?) as usize;
     let icount = u32::from_le_bytes(header[4..8].try_into()?) as usize;
-    let vbytes = vcount * std::mem::size_of::<Vertex>();
+    // Format 1 stored position, normal, uv (no tangent).
+    let stride = if format < 2 { 32 } else { std::mem::size_of::<Vertex>() };
+    let vbytes = vcount * stride;
     let body = &bytes[8..];
     if body.len() != vbytes + icount * 4 {
         bail!("mesh.bin is corrupt");
     }
     // Copy out: the zip buffer is not guaranteed to be aligned for `Vertex`.
-    let vertices: Vec<Vertex> = body[..vbytes].chunks_exact(std::mem::size_of::<Vertex>()).map(bytemuck::pod_read_unaligned).collect();
+    let floats = |chunk: &[u8]| -> Vec<f32> { chunk.chunks_exact(4).map(bytemuck::pod_read_unaligned).collect() };
+    let vertices: Vec<Vertex> = body[..vbytes]
+        .chunks_exact(stride)
+        .map(|c| {
+            let f = floats(c);
+            Vertex {
+                position: [f[0], f[1], f[2]],
+                normal: [f[3], f[4], f[5]],
+                uv: [f[6], f[7]],
+                tangent: if f.len() >= 12 { [f[8], f[9], f[10], f[11]] } else { [0.0; 4] },
+            }
+        })
+        .collect();
     let indices: Vec<u32> = body[vbytes..].chunks_exact(4).map(bytemuck::pod_read_unaligned).collect();
     if indices.iter().any(|&i| i as usize >= vertices.len()) {
         bail!("mesh.bin has invalid indices");
     }
-    Ok(Mesh { name: String::new(), vertices, indices, parts: Vec::new() })
+    let mut mesh = Mesh { name: String::new(), vertices, indices, parts: Vec::new() };
+    if format < 2 {
+        mesh.compute_tangents();
+    }
+    Ok(mesh)
 }
 
 #[cfg(test)]
@@ -249,14 +333,33 @@ mod tests {
         vp.paint.end_stroke();
         vp.render(&device, &queue, view, &cam, ShadingMode::Lit);
         let before = all_channels(&vp, &device, &queue);
+        let mut bake = BakeSettings::preset(s3dp_core::BakeStyle::Stylized);
+        bake.ao_samples = 8;
+        bake.edge_samples = 8;
+        bake.thickness_samples = 8;
+        bake.sky_samples = 8;
+        vp.bake_now(&device, &queue, &mesh, None, &bake);
+        let baked_before: Vec<Vec<u8>> =
+            vp.paint.sets[0].baked.iter().map(|t| gpu::read_texture(&device, &queue, t).unwrap()).collect();
 
         let dir = std::env::temp_dir().join(format!("s3dp-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("ball.s3dp");
-        save(&path, &mesh, &vp, &device, &queue).unwrap();
+        save(&path, &mesh, &vp, Some(&bake), &device, &queue).unwrap();
 
         let mut vp2 = Viewport::new(&device);
-        let loaded = load(&path, &mut vp2, &device, &queue).unwrap();
+        let (loaded, loaded_bake) = load(&path, &mut vp2, &device, &queue).unwrap();
+        assert_eq!(loaded_bake.as_ref(), Some(&bake));
+        for (i, t) in vp2.paint.sets[0].baked.iter().enumerate() {
+            let after = gpu::read_texture(&device, &queue, t).unwrap();
+            if t.format() == wgpu::TextureFormat::Rgba16Float {
+                let (a, b): (&[half::f16], &[half::f16]) = (bytemuck::cast_slice(&baked_before[i]), bytemuck::cast_slice(&after));
+                let worst = a.iter().zip(b).map(|(x, y)| (x.to_f32() - y.to_f32()).abs()).fold(0.0, f32::max);
+                assert!(worst < 1e-3, "{:?} differs by {worst}", BakedMap::ALL[i]);
+            } else {
+                assert!(after == baked_before[i], "{:?} differs after reload", BakedMap::ALL[i]);
+            }
+        }
         vp2.render(&device, &queue, view, &cam, ShadingMode::Lit);
         assert_eq!(loaded.indices, mesh.indices);
         assert_eq!(loaded.parts.len(), mesh.parts.len());

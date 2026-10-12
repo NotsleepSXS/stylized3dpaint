@@ -13,3 +13,4 @@ ufbx.workspace = true
 anyhow.workspace = true
 log.workspace = true
 serde.workspace = true
+mikktspace.workspace = true

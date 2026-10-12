@@ -15,3 +15,4 @@ log.workspace = true
 [dev-dependencies]
 pollster = "1"
 image.workspace = true
+glam.workspace = true

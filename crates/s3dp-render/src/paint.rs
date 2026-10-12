@@ -13,7 +13,7 @@ use std::collections::HashMap;
 
 use egui_wgpu::wgpu;
 use glam::Mat4;
-use s3dp_core::{Channel, ChannelMask, ChannelValues, Layer, LayerKind, Mesh, OrbitCamera, Vertex};
+use s3dp_core::{BakedMap, Channel, ChannelMask, ChannelValues, Layer, LayerKind, Mesh, OrbitCamera, Vertex};
 
 use crate::gpu::{self, LAYER_USAGE};
 
@@ -108,6 +108,8 @@ pub struct TextureSet {
     acc: [wgpu::Texture; 2],
     /// Final channel textures (Rgba8 for colors, R8 for scalars), dilated.
     pub display: Vec<wgpu::Texture>,
+    /// Baked mesh maps, indexed by [`BakedMap::index`].
+    pub baked: Vec<wgpu::Texture>,
     /// Group 1 of the viewport shader.
     pub(crate) view_bg: wgpu::BindGroup,
 }
@@ -434,11 +436,19 @@ impl Painter {
                     gpu::texture(device, c.label(), size, format, U::RENDER_ATTACHMENT | U::TEXTURE_BINDING | U::COPY_SRC)
                 })
                 .collect();
-            let views: Vec<wgpu::TextureView> = display.iter().map(gpu::view).collect();
+            let baked: Vec<wgpu::Texture> = BakedMap::ALL
+                .iter()
+                .map(|&m| {
+                    let t = gpu::texture(device, m.label(), size, crate::bake::baked_format(m), LAYER_USAGE);
+                    gpu::clear(&mut encoder, &t, rgb_color(m.default_value()));
+                    t
+                })
+                .collect();
+            let views: Vec<wgpu::TextureView> = display.iter().chain(&baked).map(gpu::view).collect();
             let mut entries: Vec<wgpu::BindGroupEntry> =
                 views.iter().enumerate().map(|(i, v)| gpu::tex_entry(i as u32, v)).collect();
             entries.push(wgpu::BindGroupEntry {
-                binding: Channel::COUNT as u32,
+                binding: (Channel::COUNT + BakedMap::COUNT) as u32,
                 resource: wgpu::BindingResource::Sampler(&self.sampler),
             });
             let view_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -458,6 +468,7 @@ impl Painter {
                 zero_scalar,
                 acc,
                 display,
+                baked,
                 view_bg,
             });
         }
@@ -519,6 +530,11 @@ impl Painter {
             self.undo.remove(0);
         }
         self.redo.clear();
+    }
+
+    /// Marks the document as changed without an undo step (e.g. after baking).
+    pub fn touch(&mut self) {
+        self.revision += 1;
     }
 
     /// Changes whenever the document changes; compare with a saved value to detect edits.

@@ -163,6 +163,17 @@ pub fn read_region(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::T
     Some(mapped[..bpp as usize].to_vec())
 }
 
+/// Overwrites a whole texture with tightly packed texel rows.
+pub fn write_full(queue: &wgpu::Queue, texture: &wgpu::Texture, data: &[u8]) {
+    let bpp = texture.format().block_copy_size(None).unwrap_or(4);
+    queue.write_texture(
+        texture.as_image_copy(),
+        data,
+        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(texture.width() * bpp), rows_per_image: None },
+        texture.size(),
+    );
+}
+
 /// Uploads tightly packed 8-bit texel rows into a new texture.
 pub fn upload(
     device: &wgpu::Device,

@@ -11,12 +11,22 @@ struct Globals {
 @group(1) @binding(2) var metallic_tex: texture_2d<f32>;
 @group(1) @binding(3) var height_tex: texture_2d<f32>;
 @group(1) @binding(4) var emissive_tex: texture_2d<f32>;
-@group(1) @binding(5) var paint_sampler: sampler;
+@group(1) @binding(5) var ao_tex: texture_2d<f32>;
+@group(1) @binding(6) var curvature_tex: texture_2d<f32>;
+@group(1) @binding(7) var edges_tex: texture_2d<f32>;
+@group(1) @binding(8) var cavity_tex: texture_2d<f32>;
+@group(1) @binding(9) var thickness_tex: texture_2d<f32>;
+@group(1) @binding(10) var sky_tex: texture_2d<f32>;
+@group(1) @binding(11) var normal_map_tex: texture_2d<f32>;
+@group(1) @binding(12) var world_normal_tex: texture_2d<f32>;
+@group(1) @binding(13) var position_tex: texture_2d<f32>;
+@group(1) @binding(14) var paint_sampler: sampler;
 
 struct VsIn {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
+    @location(3) tangent: vec4<f32>,
 };
 
 struct VsOut {
@@ -24,6 +34,7 @@ struct VsOut {
     @location(0) world: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
+    @location(3) tangent: vec4<f32>,
 };
 
 @vertex
@@ -33,6 +44,7 @@ fn vs_main(v: VsIn) -> VsOut {
     o.world = v.position;
     o.normal = v.normal;
     o.uv = v.uv;
+    o.tangent = v.tangent;
     return o;
 }
 
@@ -63,9 +75,19 @@ fn lit(n: vec3<f32>, v: vec3<f32>, albedo: vec3<f32>, rough: f32, metal: f32) ->
 @fragment
 fn fs_main(i: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     var n = normalize(i.normal);
-    if (!front) { n = -n; }
     let v = normalize(g.eye.xyz - i.world);
     let mode = u32(g.params.x);
+
+    // Baked tangent-space normal map (MikkTSpace, OpenGL +Y).
+    let nm = textureSample(normal_map_tex, paint_sampler, i.uv).xyz * 2.0 - 1.0;
+    var t = i.tangent.xyz - n * dot(i.tangent.xyz, n);
+    if (dot(t, t) > 1e-12) {
+        t = normalize(t);
+        let b = select(1.0, -1.0, i.tangent.w < 0.0) * cross(n, t);
+        n = normalize(t * nm.x + b * nm.y + n * nm.z);
+    }
+    if (!front) { n = -n; }
+    let ao = textureSample(ao_tex, paint_sampler, i.uv).r;
 
     let albedo = srgb_to_linear(textureSample(base_color_tex, paint_sampler, i.uv).rgb);
     let rough = textureSample(roughness_tex, paint_sampler, i.uv).r;
@@ -98,7 +120,16 @@ fn fs_main(i: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
         case 5u: { col = srgb_to_linear(vec3<f32>(metal)); }
         case 6u: { col = srgb_to_linear(vec3<f32>(height)); }
         case 7u: { col = emissive; }
-        default: { col = lit(bn, v, albedo, rough, metal) + emissive; }
+        case 100u: { col = srgb_to_linear(vec3<f32>(ao)); }
+        case 101u: { col = srgb_to_linear(textureSample(curvature_tex, paint_sampler, i.uv).rrr); }
+        case 102u: { col = srgb_to_linear(textureSample(edges_tex, paint_sampler, i.uv).rrr); }
+        case 103u: { col = srgb_to_linear(textureSample(cavity_tex, paint_sampler, i.uv).rrr); }
+        case 104u: { col = srgb_to_linear(textureSample(thickness_tex, paint_sampler, i.uv).rrr); }
+        case 105u: { col = srgb_to_linear(textureSample(sky_tex, paint_sampler, i.uv).rrr); }
+        case 106u: { col = srgb_to_linear(textureSample(normal_map_tex, paint_sampler, i.uv).rgb); }
+        case 107u: { col = srgb_to_linear(textureSample(world_normal_tex, paint_sampler, i.uv).rgb); }
+        case 108u: { col = srgb_to_linear(textureSample(position_tex, paint_sampler, i.uv).rgb); }
+        default: { col = lit(bn, v, albedo, rough, metal) * mix(1.0, ao, 0.8) + emissive; }
     }
     if (!front) { col *= vec3<f32>(0.6, 0.35, 0.35); }
     return vec4<f32>(col, 1.0);

@@ -22,6 +22,8 @@ zip.workspace = true
 egui-phosphor.workspace = true
 bytemuck.workspace = true
 
+half.workspace = true
+
 [dev-dependencies]
 pollster = "1"
 glam.workspace = true

@@ -8,6 +8,8 @@ pub struct Vertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
     pub uv: [f32; 2],
+    /// MikkTSpace tangent; w is the bitangent sign.
+    pub tangent: [f32; 4],
 }
 
 /// A contiguous index range sharing one material (a future texture set).
@@ -72,7 +74,7 @@ impl Mesh {
         let mut vertices = Vec::with_capacity(self.vertices.len());
         let mut remap = Vec::with_capacity(self.vertices.len());
         for v in &self.vertices {
-            let key: [u32; 8] = bytemuck::cast(*v);
+            let key: [u32; 12] = bytemuck::cast(*v);
             let idx = *map.entry(key).or_insert_with(|| {
                 vertices.push(*v);
                 vertices.len() as u32 - 1
@@ -113,11 +115,7 @@ impl Mesh {
                 let u = s as f32 / segments as f32;
                 let phi = u * std::f32::consts::TAU;
                 let n = Vec3::new(theta.sin() * phi.cos(), theta.cos(), theta.sin() * phi.sin());
-                vertices.push(Vertex {
-                    position: n.into(),
-                    normal: n.into(),
-                    uv: Vec2::new(u, v).into(),
-                });
+                vertices.push(Vertex { position: n.into(), normal: n.into(), uv: Vec2::new(u, v).into(), tangent: [0.0; 4] });
             }
         }
         let mut indices = Vec::new();
@@ -130,11 +128,51 @@ impl Mesh {
             }
         }
         let index_count = indices.len() as u32;
-        Mesh {
+        let mut mesh = Mesh {
             name: "Sphere".into(),
             vertices,
             indices,
             parts: vec![MeshPart { name: "default".into(), first_index: 0, index_count }],
+        };
+        mesh.compute_tangents();
+        mesh
+    }
+
+    /// Generates MikkTSpace tangents (matching Blender/Unreal/Unity bakers) and re-welds.
+    /// Triangle order is preserved, so part index ranges stay valid.
+    pub fn compute_tangents(&mut self) {
+        struct Corners<'a> {
+            mesh: &'a Mesh,
+            out: Vec<Vertex>,
         }
+        impl mikktspace::Geometry for Corners<'_> {
+            fn num_faces(&self) -> usize {
+                self.mesh.indices.len() / 3
+            }
+            fn num_vertices_of_face(&self, _face: usize) -> usize {
+                3
+            }
+            fn position(&self, face: usize, vert: usize) -> [f32; 3] {
+                self.out[face * 3 + vert].position
+            }
+            fn normal(&self, face: usize, vert: usize) -> [f32; 3] {
+                self.out[face * 3 + vert].normal
+            }
+            fn tex_coord(&self, face: usize, vert: usize) -> [f32; 2] {
+                self.out[face * 3 + vert].uv
+            }
+            fn set_tangent(&mut self, tangent: Option<mikktspace::TangentSpace>, face: usize, vert: usize) {
+                self.out[face * 3 + vert].tangent = tangent.unwrap_or_default().tangent_encoded();
+            }
+        }
+        let out: Vec<Vertex> = self.indices.iter().map(|&i| self.vertices[i as usize]).collect();
+        let mut corners = Corners { mesh: self, out };
+        if let Err(e) = mikktspace::generate_tangents(&mut corners) {
+            log::warn!("tangent generation failed: {e:?}");
+        }
+        let out = corners.out;
+        self.indices = (0..out.len() as u32).collect();
+        self.vertices = out;
+        self.weld();
     }
 }

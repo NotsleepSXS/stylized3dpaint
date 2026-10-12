@@ -3,7 +3,7 @@
 Open-source 3D texture painter focused on stylized / hand-painted texturing.
 Written in Rust with wgpu and egui.
 
-**Status:** early development — milestone M2: layers, masks, material channels, Photoshop-style UI.
+**Status:** early development — milestone M3: GPU mesh map baking.
 
 ## Build
 
@@ -28,6 +28,7 @@ Supported model formats: glTF/GLB, FBX, OBJ.
 | Undo / redo | Ctrl+Z / Ctrl+Shift+Z |
 | New layer / duplicate / delete | Ctrl+Shift+N / Ctrl+J / Del |
 | New / open / save / export | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+E |
+| Bake mesh maps | Ctrl+B |
 
 ## Features
 
@@ -35,7 +36,10 @@ Supported model formats: glTF/GLB, FBX, OBJ.
 - Layer stack shared by all texture sets: paint and fill layers, masks, 18 Photoshop blend modes, opacity
 - Channels: Base Color, Roughness, Metallic, Height (shown as bump), Emissive
 - Eyedropper picks the whole material under the cursor
-- `.s3dp` project files (zip: mesh + layer PNGs + JSON)
+- GPU ray-traced baking (BVH + compute shaders), with or without a high-poly source.
+  *Stylized* mode bakes wide soft edge / cavity masks, painterly AO, a sky light with soft
+  shadows and geometry-aware smoothing — maps meant to be layered for hand-painted looks
+- `.s3dp` project files (zip: mesh + layer PNGs + baked maps + JSON)
 - PNG export of all channel maps per texture set
 
 ## Credits
@@ -49,7 +53,7 @@ Icons: [Phosphor](https://phosphoricons.com) via `egui-phosphor` (MIT).
 - **M0** – window, model import, orbit camera, clay/UV/normal shading ✅
 - **M1** – brush painting on the mesh (texture-space projection, seam dilation, undo, PNG export) ✅
 - **M2** – layers, masks, Photoshop blend modes, material channels, eyedropper, `.s3dp` project files, Photoshop-style UI ✅
-- **M3** – GPU bakers: AO, curvature, thickness, position, ID
+- **M3** – GPU mesh map baking from the mesh itself or a high-poly: AO, curvature, edges, cavity, thickness, sky light, normal, world normal, position; Realistic and Stylized modes ✅
 - **M4** – stylized generators (edge highlight, cavity, height gradient, toon ramp, palettes), toon & PBR viewport
 - **M5** – export presets for Unreal, Unity, Godot, Blender
 

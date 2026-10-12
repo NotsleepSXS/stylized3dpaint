@@ -25,6 +25,7 @@ pub fn load(path: &Path) -> Result<Mesh> {
     if mesh.vertices.iter().all(|v| v.normal == [0.0; 3]) {
         mesh.compute_normals();
     }
+    mesh.compute_tangents();
     Ok(mesh)
 }
 
@@ -85,6 +86,7 @@ fn load_gltf(path: &Path) -> Result<Mesh> {
                         position: world.transform_point3(Vec3::from(*p)).into(),
                         normal: n.unwrap_or(Vec3::ZERO).into(),
                         uv: uvs.as_ref().map_or([0.0; 2], |t| t[i]),
+                        tangent: [0.0; 4],
                     });
                 }
                 let idx: Vec<u32> = match reader.read_indices() {
@@ -123,6 +125,7 @@ fn load_obj(path: &Path) -> Result<Mesh> {
                 } else {
                     [0.0; 2]
                 },
+                tangent: [0.0; 4],
             });
         }
         let name = m
@@ -182,6 +185,7 @@ fn load_fbx(path: &Path) -> Result<Mesh> {
                     position: [p.x as f32, p.y as f32, p.z as f32],
                     normal: nrm.into(),
                     uv,
+                    tangent: [0.0; 4],
                 });
             }
             let p = b.part(&mat_name);
