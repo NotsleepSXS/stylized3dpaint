@@ -51,6 +51,25 @@ impl App {
             vec![active]
         }
     }
+
+    /// Duplicates every selected layer (Ctrl+J); copies keep the expanded effect lists and
+    /// become the new selection.
+    pub fn duplicate_selected(&mut self) {
+        let mut copies = Vec::new();
+        for id in self.selected_layers() {
+            let map = self.viewport.paint.duplicate_node(id);
+            for (old, new) in &map {
+                if self.layers_ui.open_effects.contains(old) {
+                    self.layers_ui.open_effects.insert(*new);
+                }
+            }
+            copies.extend(map.first().map(|m| m.1));
+        }
+        if !copies.is_empty() {
+            self.viewport.paint.active = copies.last().copied();
+            self.layers_ui.selection = copies;
+        }
+    }
 }
 
 /// Actions collected while drawing and applied afterwards (rows only borrow the document).
@@ -62,7 +81,7 @@ enum Action {
     ToggleFolder(u64),
     ToggleEffectsList(u64),
     Move { node: u64, parent: Option<u64>, index: usize },
-    Duplicate(u64),
+    DuplicateSelected,
     AddMask(u64, bool),
     DeleteMask(u64),
     ToggleMask(u64),
@@ -210,7 +229,7 @@ pub fn layer_menu(app: &mut App, ui: &mut egui::Ui) {
             ui.close();
         }
         if ui.add(egui::Button::new(format!("{} {}", icon::COPY, t("Duplicate"))).shortcut_text("Ctrl+J")).clicked() {
-            app.viewport.paint.duplicate_node(a);
+            app.duplicate_selected();
             ui.close();
         }
         if ui.add(egui::Button::new(format!("{} {}", icon::TRASH, t("Delete"))).shortcut_text("Del")).clicked() {
@@ -343,10 +362,8 @@ fn toolbar(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         })
         .response
         .on_hover_text(t("Add effect… (to every selected layer or its mask)"));
-        if button(ui, icon::COPY, t("Duplicate (Ctrl+J)")).clicked()
-            && let Some(a) = active
-        {
-            actions.push(Action::Duplicate(a));
+        if button(ui, icon::COPY, t("Duplicate (Ctrl+J)")).clicked() && active.is_some() {
+            actions.push(Action::DuplicateSelected);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if button(ui, icon::TRASH, t("Delete (Del)")).clicked() && active.is_some() {
@@ -551,7 +568,7 @@ fn node_row(app: &mut App, ui: &mut egui::Ui, node: &Node, depth: usize, actions
     }
     response.context_menu(|ui| {
         if ui.button(format!("{} {}", icon::COPY, t("Duplicate"))).clicked() {
-            actions.push(Action::Duplicate(node.id));
+            actions.push(Action::DuplicateSelected);
             ui.close();
         }
         if ui.button(format!("{} {}", icon::FOLDER_PLUS, t("Group into folder"))).clicked() {
@@ -804,7 +821,6 @@ fn apply(app: &mut App, actions: Vec<Action>) {
                 }
             }
             Action::Move { node, parent, index } => paint.move_node(node, parent, index),
-            Action::Duplicate(id) => paint.duplicate_node(id),
             Action::AddMask(id, white) => paint.add_mask(id, white),
             Action::DeleteMask(id) => paint.delete_mask(id),
             Action::ToggleMask(id) => paint.edit_node(id, true, |n| {
@@ -823,6 +839,7 @@ fn apply(app: &mut App, actions: Vec<Action>) {
                     paint.edit_node(id, true, |n| n.name = name);
                 }
             }
+            Action::DuplicateSelected => app.duplicate_selected(),
             Action::DeleteSelected => {
                 let ids = app.selected_layers();
                 app.viewport.paint.delete_nodes(&ids);

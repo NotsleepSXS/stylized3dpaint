@@ -407,3 +407,45 @@ fn fills_in_folder_stay_uniform() {
         assert!(hi - lo < 1e-6, "{c:?} not uniform in a folder: {lo} .. {hi}");
     }
 }
+
+/// Duplicating a layer copies its content and mask effects: with the original hidden, the copy
+/// renders the same.
+#[test]
+fn duplicate_keeps_effects() {
+    let Some(mut s) = Scene::new() else { return };
+    let mut v = ChannelValues::defaults();
+    v.set(ChannelId::BaseColor, [0.8, 0.3, 0.1]);
+    let fill = s.vp.paint.add_node(NodeKind::Fill(v), |_, _| {});
+    let content = s.effect("hsl", &[]);
+    let content = {
+        let mut e = content;
+        for (k, val) in e.params.iter_mut() {
+            if let ParamValue::Float(f) = val
+                && k.contains("hue")
+            {
+                *f = 0.3;
+            }
+        }
+        e
+    };
+    let mask_fx = s.effect("noise", &[]);
+    s.vp.paint.edit_node(fill, false, |n| n.effects.push(content));
+    s.vp.paint.add_mask(fill, true);
+    let item_id = s.vp.paint.new_id();
+    s.vp.paint.edit_node(fill, false, |n| {
+        n.mask.as_mut().unwrap().items.push(MaskItem { id: item_id, enabled: true, opacity: 1.0, blend: BlendMode::Multiply, kind: MaskItemKind::Effect(mask_fx) })
+    });
+    let before = s.channel(ChannelId::BaseColor);
+    s.vp.paint.duplicate_node(fill);
+    let copy = s.vp.paint.active.unwrap();
+    assert_ne!(copy, fill);
+    let n = s.vp.paint.doc.find(copy).unwrap();
+    println!("copy effects {} mask items {}", n.effects.len(), n.mask.as_ref().map_or(0, |m| m.items.len()));
+    assert_eq!(n.effects.len(), 1);
+    assert_eq!(n.mask.as_ref().map_or(0, |m| m.items.len()), 3);
+    s.vp.paint.edit_node(fill, false, |n| n.visible = false);
+    let after = s.channel(ChannelId::BaseColor);
+    let d = max_diff(&before, &after);
+    println!("copy vs original max diff {d}");
+    assert!(d < 2e-3, "the copy renders differently ({d})");
+}

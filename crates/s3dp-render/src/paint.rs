@@ -680,21 +680,26 @@ impl Painter {
     }
 
     /// Deep copy with fresh ids; painted textures are shared (they are immutable).
-    pub fn duplicate_node(&mut self, id: u64) {
-        let Some(node) = self.doc.find(id).cloned() else { return };
+    /// Duplicates a node (with its effects, masks and children) above it. Returns the
+    /// (old, new) id of every copied node, so UI state can follow the copy.
+    pub fn duplicate_node(&mut self, id: u64) -> Vec<(u64, u64)> {
+        let mut map = Vec::new();
+        let Some(node) = self.doc.find(id).cloned() else { return map };
         self.checkpoint();
         let mut copy = node;
-        self.reassign_ids(&mut copy);
+        self.reassign_ids(&mut copy, &mut map);
         copy.name = format!("{} copy", copy.name);
         let new_id = copy.id;
         self.doc.insert_above(Some(id), copy);
         self.active = Some(new_id);
         self.mark_all_dirty();
+        map
     }
 
-    fn reassign_ids(&mut self, node: &mut Node) {
+    fn reassign_ids(&mut self, node: &mut Node, map: &mut Vec<(u64, u64)>) {
         let old = node.id;
         node.id = self.doc.alloc_id();
+        map.push((old, node.id));
         if let Some(t) = self.paint.get(&old).cloned() {
             self.paint.insert(node.id, t);
         }
@@ -718,7 +723,7 @@ impl Painter {
         }
         let mut children = std::mem::take(&mut node.children);
         for c in &mut children {
-            self.reassign_ids(c);
+            self.reassign_ids(c, map);
         }
         node.children = children;
     }

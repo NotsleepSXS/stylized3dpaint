@@ -654,11 +654,7 @@ impl App {
                     a.layers_ui.selection = vec![folder];
                 }
             }),
-            (S::new(M::COMMAND, Key::J), |a| {
-                if let Some(id) = a.viewport.paint.active {
-                    a.viewport.paint.duplicate_node(id);
-                }
-            }),
+            (S::new(M::COMMAND, Key::J), App::duplicate_selected),
             (S::new(M::COMMAND, Key::Q), |a| a.request(PendingAction::Quit)),
             (S::new(M::NONE, Key::Delete), |a| {
                 let ids = a.selected_layers();
