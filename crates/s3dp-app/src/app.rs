@@ -102,6 +102,8 @@ pub struct App {
     /// Last window title sent (sending a viewport command every frame forces repaints).
     title: String,
     last_autosave: std::time::Instant,
+    /// A direction parameter being set by dragging over the model: (node, effect, param).
+    pub direction_drag: Option<(u64, u64, String)>,
 }
 
 impl App {
@@ -141,6 +143,7 @@ impl App {
             export: Default::default(),
             title: String::new(),
             last_autosave: std::time::Instant::now(),
+            direction_drag: None,
         };
         app.set_mesh(Mesh::uv_sphere(64, 32));
         app.saved_revision = app.viewport.paint.revision();
@@ -441,6 +444,11 @@ impl App {
         self.sync_thumbnails();
 
         self.viewport_overlay(ui, rect);
+        if self.direction_drag.is_some() {
+            let painter = ui.painter_at(rect);
+            let text = format!("{} {}", egui_phosphor::regular::SUN, t("Drag over the model to aim the light · Esc to finish"));
+            painter.text(rect.center_top() + egui::vec2(0.0, 20.0), egui::Align2::CENTER_TOP, text, egui::FontId::proportional(14.0), egui::Color32::from_rgb(255, 210, 120));
+        }
         if let Some(pos) = response.hover_pos().filter(|_| !ui.input(|i| i.modifiers.alt)) {
             let painter = ui.painter_at(rect);
             if self.tool == Tool::Eyedropper {
@@ -474,6 +482,44 @@ impl App {
         let to_px = |p: egui::Pos2| ((p - response.rect.min) * ppp).to_pos2();
         let alt = ui.input(|i| i.modifiers.alt);
         let rs = self.render_state.clone();
+
+        // Dragging a light direction over the model (spec §6.2): light comes from the surface
+        // normal under the cursor.
+        if let Some((node, effect, param)) = self.direction_drag.clone() {
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) || self.viewport.paint.doc.find(node).is_none() {
+                self.direction_drag = None;
+                return;
+            }
+            let dragging = response.dragged_by(egui::PointerButton::Primary) || response.clicked_by(egui::PointerButton::Primary);
+            if dragging
+                && !alt
+                && let Some(pos) = response.interact_pointer_pos()
+            {
+                let p = to_px(pos);
+                if let Some((set, uv)) = self.viewport.pick(&rs.device, &rs.queue, [p.x as u32, p.y as u32])
+                    && let Some(n) = self.viewport.paint.world_normal_at(&rs.device, &rs.queue, set, uv)
+                {
+                    let first = response.drag_started() || response.clicked();
+                    self.viewport.paint.edit_node(node, first, |nd| {
+                        let set_param = |e: &mut s3dp_core::EffectInstance| {
+                            if e.id == effect {
+                                e.params.insert(param.clone(), s3dp_core::ParamValue::Vec3(n));
+                            }
+                        };
+                        if let NodeKind::Effect(e) = &mut nd.kind {
+                            set_param(e);
+                        }
+                        nd.effects.iter_mut().for_each(set_param);
+                        for item in nd.mask.iter_mut().flat_map(|m| m.items.iter_mut()) {
+                            if let s3dp_core::MaskItemKind::Effect(e) = &mut item.kind {
+                                set_param(e);
+                            }
+                        }
+                    });
+                }
+            }
+            return;
+        }
 
         if self.tool == Tool::Eyedropper {
             if (response.clicked_by(egui::PointerButton::Primary) || response.dragged_by(egui::PointerButton::Primary))
@@ -556,7 +602,10 @@ impl App {
             (S::new(M::COMMAND, Key::Z), |a| a.viewport.paint.undo()),
             (S::new(cmd_shift, Key::S), |a| a.save(true)),
             (S::new(M::COMMAND, Key::S), |a| a.save(false)),
-            (S::new(cmd_shift, Key::E), App::open_export),
+            (S::new(cmd_shift, Key::E), |a| {
+                // Repeat the last export with the same settings, or open the window.
+                if a.export.exported_once { ui_export::start(a) } else { a.open_export() }
+            }),
             (S::new(cmd_shift, Key::N), |a| {
                 a.viewport.paint.add_node(NodeKind::Paint, |_, _| {});
             }),

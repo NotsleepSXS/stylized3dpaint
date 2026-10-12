@@ -464,14 +464,16 @@ fn effect_editor(app: &mut App, ui: &mut egui::Ui, node: &Node, effect_id: u64) 
         });
     }
     ui.separator();
-    params_editor(app, ui, def, &mut x, &mut edit);
+    let mut drag = app.direction_drag.clone();
+    params_editor(app, ui, def, &mut x, &mut edit, node.id, &mut drag);
+    app.direction_drag = drag;
     if edit.changed {
         let id = e.id;
         app.viewport.paint.edit_node(node.id, edit.checkpoint, |n| with_effect(n, id, |dst| *dst = x.clone()));
     }
 }
 
-fn params_editor(app: &App, ui: &mut egui::Ui, def: &EffectDef, e: &mut EffectInstance, edit: &mut Edit) {
+fn params_editor(app: &App, ui: &mut egui::Ui, def: &EffectDef, e: &mut EffectInstance, edit: &mut Edit, node_id: u64, drag: &mut Option<(u64, u64, String)>) {
     let params = def.all_params();
     let mut groups: Vec<(Option<String>, Option<String>)> = Vec::new();
     for p in &params {
@@ -487,7 +489,7 @@ fn params_editor(app: &App, ui: &mut egui::Ui, def: &EffectDef, e: &mut EffectIn
             fit_sliders(ui, 110.0);
             egui::Grid::new(("params", eid, group.clone())).num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
                 for p in in_group {
-                    param_row(app, ui, def, e, p, edit);
+                    param_row(app, ui, def, e, p, edit, node_id, drag);
                     ui.end_row();
                 }
             });
@@ -504,7 +506,8 @@ fn params_editor(app: &App, ui: &mut egui::Ui, def: &EffectDef, e: &mut EffectIn
     }
 }
 
-fn param_row(app: &App, ui: &mut egui::Ui, def: &EffectDef, e: &mut EffectInstance, p: &ParamDef, edit: &mut Edit) {
+#[allow(clippy::too_many_arguments)]
+fn param_row(app: &App, ui: &mut egui::Ui, def: &EffectDef, e: &mut EffectInstance, p: &ParamDef, edit: &mut Edit, node_id: u64, drag: &mut Option<(u64, u64, String)>) {
     let label = pick(&p.label, p.label_ru.as_deref());
     let tip = pick(p.tip.as_deref().unwrap_or(""), p.tip_ru.as_deref());
     let mut l = ui.label(label);
@@ -549,6 +552,10 @@ fn param_row(app: &App, ui: &mut egui::Ui, def: &EffectDef, e: &mut EffectInstan
             ui.label("")
         }
         (ParamKind::Direction { .. }, ParamValue::Vec3(d)) => {
+            let active = drag.as_ref().is_some_and(|(_, eid, pid)| *eid == e.id && *pid == p.id);
+            if ui.selectable_label(active, icon::SUN).on_hover_text(t("Drag in the viewport to aim")).clicked() {
+                *drag = if active { None } else { Some((node_id, e.id, p.id.clone())) };
+            }
             let dir = glam::Vec3::from(*d).normalize_or(glam::Vec3::Y);
             let mut elevation = dir.y.clamp(-1.0, 1.0).asin().to_degrees();
             let mut azimuth = dir.x.atan2(dir.z).to_degrees();

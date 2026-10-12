@@ -23,13 +23,15 @@ pub struct ExportUi {
     open_folder: bool,
     running: Option<mpsc::Receiver<anyhow::Result<ExportReport>>>,
     last: Option<String>,
+    /// An export was configured and run in this session (Ctrl+Shift+E repeats it).
+    pub exported_once: bool,
 }
 
 impl Default for ExportUi {
     fn default() -> Self {
         let presets = builtin_presets();
         let settings = ExportSettings { output_dir: default_dir(), ..ExportSettings::default() };
-        Self { open: false, presets, preset: 0, settings, sets: Vec::new(), open_folder: true, running: None, last: None }
+        Self { open: false, presets, preset: 0, settings, sets: Vec::new(), open_folder: true, running: None, last: None, exported_once: false }
     }
 }
 
@@ -38,7 +40,11 @@ fn default_dir() -> PathBuf {
 }
 
 /// Reads every needed buffer from the GPU (on the UI thread), then exports in a thread.
-fn start(app: &mut App) {
+pub fn start(app: &mut App) {
+    if app.export.running.is_some() {
+        return;
+    }
+    app.export.exported_once = true;
     let rs = app.render_state.clone();
     let paint = &app.viewport.paint;
     let mut sources = Vec::new();

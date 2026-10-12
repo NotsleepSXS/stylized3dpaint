@@ -1696,6 +1696,17 @@ impl Painter {
         Some(values)
     }
 
+    /// World-space normal of the surface at `uv` (for dragging light directions in the viewport).
+    pub fn world_normal_at(&self, device: &wgpu::Device, queue: &wgpu::Queue, set: usize, uv: [f32; 2]) -> Option<[f32; 3]> {
+        let s = self.sets.get(set)?;
+        let x = ((uv[0].rem_euclid(1.0) * s.size as f32) as u32).min(s.size - 1);
+        let y = ((uv[1].rem_euclid(1.0) * s.size as f32) as u32).min(s.size - 1);
+        let bytes = gpu::read_region(device, queue, &s.baked[BakedMap::WorldNormal.index()], x, y)?;
+        let h: &[half::f16] = bytemuck::cast_slice(&bytes);
+        let n = glam::Vec3::new(h[0].to_f32(), h[1].to_f32(), h[2].to_f32()) * 2.0 - 1.0;
+        Some(n.normalize_or(glam::Vec3::Y).into())
+    }
+
     /// Effect definitions referenced by the document that are unknown.
     pub fn missing_effects(&self) -> Vec<String> {
         let mut out = Vec::new();

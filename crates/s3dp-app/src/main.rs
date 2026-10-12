@@ -10,8 +10,7 @@ mod ui_layers;
 mod ui_panels;
 
 fn main() -> eframe::Result {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn"))
-        .init();
+    init_logging();
     let initial = std::env::args_os().nth(1).map(std::path::PathBuf::from);
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -36,4 +35,35 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| Ok(Box::new(app::App::new(cc, initial)?))),
     )
+}
+
+/// Logs to stderr and to `~/.cache/stylized3dpaint/stylized3dpaint.log` (spec §11).
+fn init_logging() {
+    struct Tee(Option<std::fs::File>);
+    impl std::io::Write for Tee {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            let _ = std::io::stderr().write_all(buf);
+            if let Some(f) = &mut self.0 {
+                let _ = f.write_all(buf);
+            }
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            if let Some(f) = &mut self.0 {
+                f.flush()?;
+            }
+            Ok(())
+        }
+    }
+    let dir = std::env::var_os("XDG_CACHE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
+        .map(|d| d.join("stylized3dpaint"));
+    let file = dir.and_then(|d| {
+        std::fs::create_dir_all(&d).ok()?;
+        std::fs::File::create(d.join("stylized3dpaint.log")).ok()
+    });
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn"))
+        .target(env_logger::Target::Pipe(Box::new(Tee(file))))
+        .init();
 }
