@@ -1,6 +1,7 @@
 //! Dockable panels (egui_dock): the viewport, Layers, Properties, Brush and Project are tabs
 //! that can be dragged anywhere, split, resized and floated. The layout is saved to
-//! `~/.config/stylized3dpaint/layout.json` and restored on start.
+//! `~/.config/stylized3dpaint/layout.ron` and restored on start (RON: the dock state holds
+//! non-finite rects that JSON would turn into nulls).
 
 use std::path::PathBuf;
 
@@ -57,12 +58,12 @@ pub fn default_layout() -> DockState<Tab> {
 
 fn layout_path() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    Some(base.join("stylized3dpaint").join("layout.json"))
+    Some(base.join("stylized3dpaint").join("layout.ron"))
 }
 
 /// The saved layout, or the default when there is none / it is unreadable / lost the viewport.
 pub fn load_layout() -> DockState<Tab> {
-    let saved = layout_path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|s| serde_json::from_str::<DockState<Tab>>(&s).ok());
+    let saved = layout_path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|s| ron::from_str::<DockState<Tab>>(&s).ok());
     match saved {
         Some(state) if state.find_tab(&Tab::Viewport).is_some() => state,
         _ => default_layout(),
@@ -74,7 +75,7 @@ pub fn save_layout(state: &DockState<Tab>) {
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    match serde_json::to_string(state) {
+    match ron::to_string(state) {
         Ok(json) => {
             if let Err(e) = std::fs::write(&path, json) {
                 log::warn!("cannot save the panel layout: {e}");
@@ -223,14 +224,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_layout_has_every_tab_once_and_survives_json() {
+    fn default_layout_has_every_tab_once_and_survives_saving() {
         let d = default_layout();
         for tab in Tab::ALL {
             assert!(d.find_tab(&tab).is_some(), "{tab:?} missing");
         }
         assert_eq!(d.iter_all_tabs().count(), Tab::ALL.len());
-        let json = serde_json::to_string(&d).unwrap();
-        let back: DockState<Tab> = serde_json::from_str(&json).unwrap();
+        let text = ron::to_string(&d).unwrap();
+        let back: DockState<Tab> = ron::from_str(&text).unwrap();
         assert_eq!(back.iter_all_tabs().count(), Tab::ALL.len());
     }
 

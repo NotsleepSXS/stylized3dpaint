@@ -22,6 +22,7 @@ serde_json.workspace = true
 zip.workspace = true
 egui-phosphor.workspace = true
 egui_dock.workspace = true
+ron = "0.11"
 bytemuck.workspace = true
 
 half.workspace = true
