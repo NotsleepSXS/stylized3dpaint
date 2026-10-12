@@ -17,7 +17,7 @@ darken, hue shift by light — no hand painting.*
 Needs a recent stable Rust (edition 2024) and a Vulkan / Metal / DX12 capable GPU.
 
 ```sh
-git clone https://github.com/noslivideo/stylized3dpaint
+git clone https://github.com/NotsleepSXS/stylized3dpaint
 cd stylized3dpaint
 cargo run --release -- path/to/model.fbx
 ```

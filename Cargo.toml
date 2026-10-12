@@ -6,7 +6,7 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/noslivideo/stylized3dpaint"
+repository = "https://github.com/NotsleepSXS/stylized3dpaint"
 
 [workspace.dependencies]
 s3dp-core = { path = "crates/s3dp-core" }
