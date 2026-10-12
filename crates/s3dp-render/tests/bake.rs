@@ -67,6 +67,7 @@ impl Baked {
 fn bake(mesh: &Mesh, high: Option<&Mesh>, settings: &BakeSettings) -> Option<Baked> {
     let (device, queue) = device()?;
     let mut vp = Viewport::new(&device);
+        vp.paint.throttle_effects = false;
     vp.set_mesh(&device, &queue, mesh, TEX);
     vp.bake_now(&device, &queue, mesh, high, settings);
     let maps = vp.paint.sets[0]
@@ -191,6 +192,7 @@ fn preview_monkey() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/test/monkey_crate.glb");
     let mesh = s3dp_core::import::load(&path).unwrap();
     let mut vp = Viewport::new(&device);
+        vp.paint.throttle_effects = false;
     vp.set_mesh(&device, &queue, &mesh, 1024);
     let t = std::time::Instant::now();
     vp.bake_now(&device, &queue, &mesh, None, &BakeSettings::preset(BakeStyle::Stylized));

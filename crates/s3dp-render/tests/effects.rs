@@ -25,6 +25,7 @@ impl Scene {
     fn new() -> Option<Self> {
         let (device, queue) = device()?;
         let mut vp = Viewport::new(&device);
+        vp.paint.throttle_effects = false;
         vp.set_mesh(&device, &queue, &Mesh::uv_sphere(64, 32), TEX);
         vp.paint.set_defaults(ChannelValues { base_color: [0.0; 3], ..ChannelValues::DEFAULTS }, false);
         vp.paint.add_layer(LayerKind::Fill(ChannelValues { base_color: [1.0; 3], ..ChannelValues::DEFAULTS }));
@@ -157,6 +158,7 @@ fn slope_blur_smears_and_strokes_noise_works() {
 fn stylize_posterizes_and_crisps_metal() {
     let Some((device, queue)) = device() else { return };
     let mut vp = Viewport::new(&device);
+        vp.paint.throttle_effects = false;
     vp.set_mesh(&device, &queue, &Mesh::uv_sphere(64, 32), TEX);
     // Base: a smooth gradient in color and metallic.
     vp.paint.set_defaults(ChannelValues { base_color: [0.0; 3], metallic: 0.0, ..ChannelValues::DEFAULTS }, false);
@@ -201,11 +203,18 @@ fn stylize_posterizes_and_crisps_metal() {
 fn timing_slope_blur_2k() {
     let Some((device, queue)) = device() else { return };
     let mut vp = Viewport::new(&device);
+        vp.paint.throttle_effects = false;
     vp.set_mesh(&device, &queue, &Mesh::uv_sphere(64, 32), 2048);
     vp.paint.add_layer(LayerKind::Fill(ChannelValues::DEFAULTS));
     let top = vp.paint.active;
     let mut effects = hard_band();
-    effects.push(MaskEffect::new(EffectKind::Warp(WarpParams { mode: WarpMode::SlopeBlur, samples: 16, ..Default::default() })));
+    let heavy = std::env::var("HEAVY").is_ok();
+    effects.push(MaskEffect::new(EffectKind::Warp(WarpParams {
+        mode: WarpMode::SlopeBlur,
+        samples: if heavy { 48 } else { 16 },
+        noise: NoiseParams { kind: NoiseKind::Strokes, octaves: if heavy { 8 } else { 4 }, ..Default::default() },
+        ..Default::default()
+    })));
     for i in 0..4 {
         let mut e = effects.clone();
         if let EffectKind::Warp(w) = &mut e[2].kind {
@@ -229,6 +238,7 @@ fn preview_stylized_stack() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/test/monkey_crate.glb");
     let mesh = s3dp_core::import::load(&path).unwrap();
     let mut vp = Viewport::new(&device);
+        vp.paint.throttle_effects = false;
     vp.set_mesh(&device, &queue, &mesh, 1024);
     vp.bake_now(&device, &queue, &mesh, None, &BakeSettings::preset(BakeStyle::Stylized));
     let p = &mut vp.paint;

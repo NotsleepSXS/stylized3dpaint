@@ -39,14 +39,14 @@ pub struct NoiseParams {
     /// Feature size relative to the mesh radius.
     pub scale: f32,
     pub octaves: u32,
-    /// Strokes: how much the noise is stretched (1 = round).
+    /// Strokes: how much the noise is stretched along the surface (1 = off, round).
     pub stretch: f32,
     pub seed: u32,
 }
 
 impl Default for NoiseParams {
     fn default() -> Self {
-        Self { kind: NoiseKind::Perlin, scale: 0.08, octaves: 4, stretch: 4.0, seed: 1 }
+        Self { kind: NoiseKind::Perlin, scale: 0.08, octaves: 4, stretch: 1.0, seed: 1 }
     }
 }
 

@@ -111,6 +111,10 @@ fn stroke_axis(n: vec3<f32>) -> vec3<f32> {
 
 // Noise in [0, 1] at world position p with normal n.
 fn noise01(p: vec3<f32>, n: vec3<f32>, kind: u32, offset: f32) -> f32 {
+    return noise01_oct(p, n, kind, offset, u32(E.noise.y));
+}
+
+fn noise01_oct(p: vec3<f32>, n: vec3<f32>, kind: u32, offset: f32, octaves: u32) -> f32 {
     let scale = max(E.noise.x, 1e-6);
     let seed = u32(E.noise.w);
     var q = p / scale + vec3<f32>(offset * 31.7);
@@ -121,7 +125,7 @@ fn noise01(p: vec3<f32>, n: vec3<f32>, kind: u32, offset: f32) -> f32 {
         let t = stroke_axis(n);
         q = q - t * dot(q, t) * (1.0 - 1.0 / max(E.noise.z, 1.0));
     }
-    return clamp(fbm(q, u32(E.noise.y), seed) * 0.5 + 0.5, 0.0, 1.0);
+    return clamp(fbm(q, octaves, seed) * 0.5 + 0.5, 0.0, 1.0);
 }
 
 // ---------------------------------------------------------------- helpers
@@ -195,12 +199,15 @@ fn sample_prev(px: vec2<f32>) -> f32 {
 // Noise flow direction in the tangent plane (gradient of the noise, rotated 90°
 // for a swirling flow when `swirl` is true).
 fn flow(p: vec3<f32>, n: vec3<f32>, kind: u32) -> vec3<f32> {
+    // The flow only needs the large-scale shape of the noise: 2 octaves are plenty
+    // and keep slope blur affordable.
+    let oct = min(u32(E.noise.y), 2u);
     let h = max(E.noise.x, 1e-6) * 0.15;
-    let base = noise01(p, n, kind, 0.0);
+    let base = noise01_oct(p, n, kind, 0.0, oct);
     let g = vec3<f32>(
-        noise01(p + vec3<f32>(h, 0.0, 0.0), n, kind, 0.0) - base,
-        noise01(p + vec3<f32>(0.0, h, 0.0), n, kind, 0.0) - base,
-        noise01(p + vec3<f32>(0.0, 0.0, h), n, kind, 0.0) - base,
+        noise01_oct(p + vec3<f32>(h, 0.0, 0.0), n, kind, 0.0, oct) - base,
+        noise01_oct(p + vec3<f32>(0.0, h, 0.0), n, kind, 0.0, oct) - base,
+        noise01_oct(p + vec3<f32>(0.0, 0.0, h), n, kind, 0.0, oct) - base,
     );
     let tangent = g - n * dot(g, n);
     let len = length(tangent);

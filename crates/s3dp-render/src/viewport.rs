@@ -106,6 +106,8 @@ pub struct Viewport {
     baker: Baker,
     bake: Option<BakeJob>,
     bake_finished: bool,
+    /// Camera / size / mode of the frame currently in the output texture.
+    shown: Option<(String, [u32; 2], ShadingMode)>,
     texture_size: u32,
     /// Camera and size of the last rendered frame (dabs are in its pixel space).
     last_frame: Option<(OrbitCamera, [u32; 2])>,
@@ -269,6 +271,7 @@ impl Viewport {
             baker: Baker::new(device),
             bake: None,
             bake_finished: false,
+            shown: None,
             texture_size: 2048,
             last_frame: None,
             globals,
@@ -466,6 +469,14 @@ impl Viewport {
             };
             self.paint.update(device, queue, &mut encoder, &mesh.vertices, &mesh.indices, scene);
         }
+        // Skip drawing when nothing visible changed (egui repaints on every mouse move).
+        let shown = (format!("{camera:?}"), size, mode);
+        let changed = self.paint.take_changed();
+        if !recreated && !changed && self.shown.as_ref() == Some(&shown) {
+            queue.submit([encoder.finish()]);
+            return (&targets.resolve, false);
+        }
+        self.shown = Some(shown);
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("viewport"),

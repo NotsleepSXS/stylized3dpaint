@@ -23,6 +23,7 @@ impl Scene {
     fn new() -> Option<Self> {
         let (device, queue) = device()?;
         let mut vp = Viewport::new(&device);
+        vp.paint.throttle_effects = false;
         vp.set_mesh(&device, &queue, &Mesh::uv_sphere(64, 32), TEX);
         let mut cam = OrbitCamera::default();
         cam.frame(glam::Vec3::ZERO, 1.0, 1.0);

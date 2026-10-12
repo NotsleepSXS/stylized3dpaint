@@ -90,6 +90,8 @@ pub struct App {
     allow_close: bool,
     pub picker: crate::color_picker::PickerState,
     pub bake: ui_bake::BakeUi,
+    /// Last window title sent (sending a viewport command every frame forces repaints).
+    title: String,
 }
 
 impl App {
@@ -122,6 +124,7 @@ impl App {
             allow_close: false,
             picker: Default::default(),
             bake: Default::default(),
+            title: String::new(),
         };
         app.set_mesh(Mesh::uv_sphere(64, 32));
         app.saved_revision = app.viewport.paint.revision();
@@ -671,14 +674,18 @@ impl App {
         }
     }
 
-    fn update_title(&self, ctx: &egui::Context) {
+    fn update_title(&mut self, ctx: &egui::Context) {
         let name = self
             .project_path
             .as_ref()
             .and_then(|p| p.file_name())
             .map_or_else(|| self.mesh.name.clone(), |n| n.to_string_lossy().into_owned());
         let star = if self.is_modified() { "*" } else { "" };
-        ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!("{name}{star} — Stylized3DPaint")));
+        let title = format!("{name}{star} — Stylized3DPaint");
+        if title != self.title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.title = title;
+        }
     }
 }
 
@@ -689,6 +696,7 @@ pub fn sanitize(name: &str) -> String {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        log::trace!("frame {}", ctx.cumulative_frame_nr());
         if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && self.is_modified() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.pending = Some(PendingAction::Quit);
@@ -732,6 +740,9 @@ impl eframe::App for App {
         }
         if self.viewport.bake_progress().is_some() {
             ctx.request_repaint();
+        } else if self.viewport.paint.wants_repaint() {
+            // A throttled effect recompute is pending.
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
         self.confirm_dialog(ui);
     }

@@ -208,6 +208,12 @@ pub struct Painter {
     baked_revision: u64,
     /// Mesh size, used to scale effect settings.
     pub scale: MeshScale,
+    /// When effect masks were last recomputed (recomputes are throttled while editing).
+    last_fx: Option<std::time::Instant>,
+    /// Something changed this frame that the viewport must show.
+    changed: bool,
+    /// Throttle effect recomputes to ~10/s (interactive use). Off for batch work and tests.
+    pub throttle_effects: bool,
 }
 
 fn uv_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
@@ -414,6 +420,9 @@ impl Painter {
             fx_cache: HashMap::new(),
             baked_revision: 0,
             scale: MeshScale::default(),
+            last_fx: None,
+            changed: true,
+            throttle_effects: true,
         }
     }
 
@@ -875,6 +884,11 @@ impl Painter {
 
     /// Applies pending dabs and recomposites dirty channels. `scene` is the camera depth,
     /// camera and pixel size the queued dabs refer to.
+    /// Returns (and clears) whether anything visible changed since the last call.
+    pub fn take_changed(&mut self) -> bool {
+        std::mem::take(&mut self.changed)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
@@ -921,6 +935,7 @@ impl Painter {
             viewport: [viewport_px[0] as f32, viewport_px[1] as f32, near, far],
             brush: [stroke.brush.hardness.clamp(0.0, 0.99), self.pending.len() as f32, 0.0, 0.0],
         };
+        self.changed = true;
         queue.write_buffer(&self.dab_params, 0, bytemuck::bytes_of(&params));
         queue.write_buffer(&self.dab_buffer, 0, bytemuck::cast_slice(&self.pending));
         self.pending.clear();
@@ -961,9 +976,33 @@ impl Painter {
     }
 
 
+    /// Hash of everything an effect mask depends on.
+    fn fx_key(&self, layer: &GpuLayer, si: usize) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let m = &layer.meta;
+        let base = if m.has_mask && m.mask_enabled { layer.sets[si].mask.as_ref() } else { None };
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        format!("{:?}", m.effects).hash(&mut h);
+        base.hash(&mut h);
+        self.baked_revision.hash(&mut h);
+        self.sets[si].size.hash(&mut h);
+        h.finish()
+    }
+
+    /// Whether some effect mask is out of date.
+    fn effects_stale(&self) -> bool {
+        self.layers.iter().filter(|l| l.meta.effects.iter().any(|e| e.enabled)).any(|l| {
+            (0..self.sets.len()).any(|si| self.fx_cache.get(&(l.meta.id, si)).is_none_or(|c| c.0 != self.fx_key(l, si)))
+        })
+    }
+
+    /// True while a throttled recompute is waiting: the UI should repaint again soon.
+    pub fn wants_repaint(&self) -> bool {
+        self.dirty.iter().any(|&d| d)
+    }
+
     /// Recomputes effect masks whose inputs changed.
     fn update_effect_masks(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
-        use std::hash::{Hash, Hasher};
         let ids: Vec<u64> = self.layers.iter().map(|l| l.meta.id).collect();
         self.fx_cache.retain(|k, _| ids.contains(&k.0));
         for layer in &self.layers {
@@ -973,17 +1012,13 @@ impl Painter {
             }
             for (si, set) in self.sets.iter().enumerate() {
                 let base = if m.has_mask && m.mask_enabled { layer.sets[si].mask.as_ref() } else { None };
-                let mut h = std::collections::hash_map::DefaultHasher::new();
-                format!("{:?}", m.effects).hash(&mut h);
-                base.hash(&mut h);
-                self.baked_revision.hash(&mut h);
-                set.size.hash(&mut h);
-                let key = h.finish();
+                let key = self.fx_key(layer, si);
                 if self.fx_cache.get(&(m.id, si)).is_some_and(|c| c.0 == key) {
                     continue;
                 }
                 let inputs = EffectInputs { geo_pos: &set.geo_pos, geo_nrm: &set.geo_nrm, baked: &set.baked, tmp: &set.fx_tmp };
                 let base = base.unwrap_or(&set.white_mask);
+                log::debug!("effect mask recompute: layer {} set {si}", m.id);
                 let tex = self.effects.run(device, encoder, &m.effects, base, &inputs, &self.scale);
                 self.fx_cache.insert((m.id, si), (key, tex));
             }
@@ -995,6 +1030,17 @@ impl Painter {
         if !self.dirty.iter().any(|&d| d) || self.sets.is_empty() {
             return;
         }
+        // Effect masks are expensive (slope blur can take tens of ms at 4K): while their
+        // settings are being dragged, recompute at most ~10 times per second.
+        if self.effects_stale() {
+            const MIN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+            if self.throttle_effects && self.last_fx.is_some_and(|t| t.elapsed() < MIN_INTERVAL) {
+                return;
+            }
+            self.last_fx = Some(std::time::Instant::now());
+        }
+        log::debug!("composite: dirty {:?}", self.dirty);
+        self.changed = true;
         self.update_effect_masks(device, encoder);
 
         // Plan all draws first so their parameters go into dynamic uniform buffers.

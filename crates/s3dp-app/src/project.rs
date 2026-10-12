@@ -303,6 +303,7 @@ mod tests {
         let mut mesh = Mesh::uv_sphere(32, 16);
         mesh.name = "ball".into();
         let mut vp = Viewport::new(&device);
+        vp.paint.throttle_effects = false;
         vp.set_mesh(&device, &queue, &mesh, 256);
         let mut cam = OrbitCamera::default();
         cam.frame(glam::Vec3::ZERO, 1.0, 1.0);
@@ -349,6 +350,7 @@ mod tests {
         save(&path, &mesh, &vp, Some(&bake), &device, &queue).unwrap();
 
         let mut vp2 = Viewport::new(&device);
+        vp2.paint.throttle_effects = false;
         let (loaded, loaded_bake) = load(&path, &mut vp2, &device, &queue).unwrap();
         assert_eq!(loaded_bake.as_ref(), Some(&bake));
         for (i, t) in vp2.paint.sets[0].baked.iter().enumerate() {
@@ -369,5 +371,36 @@ mod tests {
         assert_eq!(vp2.paint.layers[1].meta.blend, BlendMode::Overlay);
         assert_eq!(before, all_channels(&vp2, &device, &queue), "composited maps must match after reload");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Writes target/tmp/fx_stress.s3dp (monkey + slope blur layer) for manual testing:
+    /// `cargo test -p stylized3dpaint stress_project -- --ignored`.
+    #[test]
+    #[ignore]
+    fn stress_project() {
+        use s3dp_core::{EffectKind, MaskEffect, NoiseKind, NoiseParams, WarpMode, WarpParams};
+        let Some((device, queue)) = device() else { return };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mesh = s3dp_core::import::load(&root.join("assets/test/monkey_crate.glb")).unwrap();
+        let mut vp = Viewport::new(&device);
+        vp.paint.throttle_effects = false;
+        vp.set_mesh(&device, &queue, &mesh, 2048);
+        let bake = BakeSettings::default();
+        vp.bake_now(&device, &queue, &mesh, None, &bake);
+        vp.paint.add_layer_with(LayerKind::Fill(ChannelValues { base_color: [1.0, 0.9, 0.7], ..ChannelValues::DEFAULTS }), |l| {
+            l.name = "Edge highlight".into();
+            l.effects = vec![
+                MaskEffect::new(EffectKind::generator(s3dp_core::GeneratorSource::Map(BakedMap::Edges))),
+                MaskEffect::new(EffectKind::Warp(WarpParams {
+                    mode: WarpMode::SlopeBlur,
+                    samples: 48,
+                    intensity: 0.1,
+                    noise: NoiseParams { kind: NoiseKind::Strokes, octaves: 8, ..Default::default() },
+                    ..Default::default()
+                })),
+            ];
+        });
+        std::fs::create_dir_all(root.join("target/tmp")).unwrap();
+        save(&root.join("target/tmp/fx_stress.s3dp"), &mesh, &vp, Some(&bake), &device, &queue).unwrap();
     }
 }
