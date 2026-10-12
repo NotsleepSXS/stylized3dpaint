@@ -1,0 +1,14 @@
+[package]
+name = "s3dp-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+glam.workspace = true
+bytemuck.workspace = true
+gltf.workspace = true
+tobj.workspace = true
+ufbx.workspace = true
+anyhow.workspace = true
+log.workspace = true

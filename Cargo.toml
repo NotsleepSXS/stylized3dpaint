@@ -1,0 +1,28 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/noslivideo/stylized3dpaint"
+
+[workspace.dependencies]
+s3dp-core = { path = "crates/s3dp-core" }
+s3dp-render = { path = "crates/s3dp-render" }
+eframe = { version = "0.36", default-features = false, features = ["wgpu", "default_fonts", "wayland", "x11"] }
+egui = "0.36"
+egui-wgpu = "0.36"
+glam = { version = "0.34", features = ["bytemuck"] }
+bytemuck = { version = "1", features = ["derive"] }
+gltf = "1.4"
+tobj = "4"
+ufbx = "0.11"
+rfd = "0.17"
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+
+[profile.dev.package."*"]
+opt-level = 2

@@ -1,0 +1,17 @@
+[package]
+name = "stylized3dpaint"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+s3dp-core.workspace = true
+s3dp-render.workspace = true
+eframe.workspace = true
+egui.workspace = true
+egui-wgpu.workspace = true
+glam.workspace = true
+rfd.workspace = true
+anyhow.workspace = true
+log.workspace = true
+env_logger.workspace = true

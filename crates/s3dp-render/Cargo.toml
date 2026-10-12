@@ -1,0 +1,13 @@
+[package]
+name = "s3dp-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+s3dp-core.workspace = true
+egui-wgpu.workspace = true
+egui.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
+log.workspace = true
