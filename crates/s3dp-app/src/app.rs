@@ -649,8 +649,9 @@ impl App {
             (S::new(M::COMMAND, Key::O), App::open_project_dialog),
             (S::new(M::COMMAND, Key::B), |a| a.bake.open = true),
             (S::new(M::COMMAND, Key::G), |a| {
-                if let Some(id) = a.viewport.paint.active {
-                    a.viewport.paint.group(&[id]);
+                let ids = a.selected_layers();
+                if let Some(folder) = a.viewport.paint.group(&ids) {
+                    a.layers_ui.selection = vec![folder];
                 }
             }),
             (S::new(M::COMMAND, Key::J), |a| {
@@ -660,9 +661,9 @@ impl App {
             }),
             (S::new(M::COMMAND, Key::Q), |a| a.request(PendingAction::Quit)),
             (S::new(M::NONE, Key::Delete), |a| {
-                if let Some(id) = a.viewport.paint.active {
-                    a.viewport.paint.delete_node(id);
-                }
+                let ids = a.selected_layers();
+                a.viewport.paint.delete_nodes(&ids);
+                a.layers_ui.selection.clear();
             }),
         ];
         if ui.ctx().egui_wants_keyboard_input() {

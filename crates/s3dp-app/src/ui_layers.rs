@@ -31,6 +31,26 @@ pub struct LayersUi {
     open_effects: HashSet<u64>,
     /// Search text of the "add effect" popup.
     pub search: String,
+    /// Extra selected nodes (Shift / Ctrl+click); the active node is always selected.
+    pub selection: Vec<u64>,
+    /// Start of a Shift+click range.
+    anchor: Option<u64>,
+    /// Node rows top to bottom as last drawn (for Shift ranges).
+    visible: Vec<u64>,
+}
+
+impl App {
+    /// Selected layers: the multi-selection when it holds the active node, else just the active one.
+    pub fn selected_layers(&self) -> Vec<u64> {
+        let paint = &self.viewport.paint;
+        let Some(active) = paint.active else { return Vec::new() };
+        let sel = &self.layers_ui.selection;
+        if sel.contains(&active) {
+            sel.iter().copied().filter(|id| paint.doc.find(*id).is_some()).collect()
+        } else {
+            vec![active]
+        }
+    }
 }
 
 /// Actions collected while drawing and applied afterwards (rows only borrow the document).
@@ -43,15 +63,17 @@ enum Action {
     ToggleEffectsList(u64),
     Move { node: u64, parent: Option<u64>, index: usize },
     Duplicate(u64),
-    Delete(u64),
     AddMask(u64, bool),
     DeleteMask(u64),
     ToggleMask(u64),
     StartRename(u64),
     Rename(u64, String),
-    Group(u64),
     /// Context-menu operation on a content / mask effect: (node, effect, op).
     Effect(u64, u64, EffectOp),
+    /// Click on a layer row with the Shift / Ctrl state.
+    Click(u64, egui::Modifiers),
+    GroupSelected,
+    DeleteSelected,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -115,9 +137,27 @@ pub fn effect_picker(ui: &mut egui::Ui, search: &mut String, target: Target) -> 
     chosen
 }
 
+/// Adds the effect to every selected layer (one instance each); the active one keeps it selected.
+pub fn add_effect_to_selected(app: &mut App, def_id: &str) {
+    let active = app.viewport.paint.active;
+    let selected_effect = app.viewport.paint.selected_effect;
+    let mut active_effect = None;
+    for node in app.selected_layers() {
+        add_effect_to(app, node, def_id);
+        if Some(node) == active {
+            active_effect = app.viewport.paint.selected_effect;
+        }
+    }
+    app.viewport.paint.selected_effect = active_effect.or(selected_effect);
+}
+
 /// Adds an effect to the active node: to its mask when the mask is being edited, else to its content.
 pub fn add_effect_to_active(app: &mut App, def_id: &str) {
     let Some(node) = app.viewport.paint.active else { return };
+    add_effect_to(app, node, def_id);
+}
+
+fn add_effect_to(app: &mut App, node: u64, def_id: &str) {
     let Some(inst) = app.viewport.paint.new_effect(def_id) else { return };
     let effect_id = inst.id;
     let on_mask = matches!(app.viewport.paint.target, EditTarget::MaskItem(_)) || registry().get(def_id).is_some_and(|d| !d.targets.contains(&Target::Content));
@@ -163,7 +203,10 @@ pub fn layer_menu(app: &mut App, ui: &mut egui::Ui) {
     ui.separator();
     if let Some(a) = active {
         if ui.add(egui::Button::new(format!("{} {}", icon::FOLDER_PLUS, t("Group into folder"))).shortcut_text("Ctrl+G")).clicked() {
-            app.viewport.paint.group(&[a]);
+            let ids = app.selected_layers();
+            if let Some(folder) = app.viewport.paint.group(&ids) {
+                app.layers_ui.selection = vec![folder];
+            }
             ui.close();
         }
         if ui.add(egui::Button::new(format!("{} {}", icon::COPY, t("Duplicate"))).shortcut_text("Ctrl+J")).clicked() {
@@ -171,7 +214,9 @@ pub fn layer_menu(app: &mut App, ui: &mut egui::Ui) {
             ui.close();
         }
         if ui.add(egui::Button::new(format!("{} {}", icon::TRASH, t("Delete"))).shortcut_text("Del")).clicked() {
-            app.viewport.paint.delete_node(a);
+            let ids = app.selected_layers();
+            app.viewport.paint.delete_nodes(&ids);
+            app.layers_ui.selection.clear();
             ui.close();
         }
         ui.separator();
@@ -211,6 +256,7 @@ pub fn layers_panel(app: &mut App, ui: &mut egui::Ui) {
         let nodes = app.viewport.paint.doc.nodes.clone();
         let mut rows: Vec<(u64, Option<u64>, usize, egui::Rect, bool)> = Vec::new();
         draw_list(app, ui, &nodes, None, 0, &mut actions, &mut rows);
+        app.layers_ui.visible = rows.iter().map(|r| r.0).collect();
         drag_and_drop(app, ui, &rows, &mut actions);
     });
     apply(app, actions);
@@ -260,8 +306,14 @@ fn toolbar(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         if button(ui, icon::PAINT_BUCKET, t("New fill layer")).clicked() {
             new_fill(app);
         }
-        if button(ui, icon::FOLDER_SIMPLE_PLUS, t("New folder")).clicked() {
-            app.viewport.paint.add_node(NodeKind::Folder { expanded: true }, |_, _| {});
+        let many = app.selected_layers().len() > 1;
+        let folder_tip = if many { t("Group the selected layers into a folder (Ctrl+G)") } else { t("New folder (with several layers selected: group them)") };
+        if button(ui, icon::FOLDER_SIMPLE_PLUS, folder_tip).clicked() {
+            if many {
+                actions.push(Action::GroupSelected);
+            } else {
+                app.viewport.paint.add_node(NodeKind::Folder { expanded: true }, |_, _| {});
+            }
         }
         ui.menu_button(RichText::new(icon::STACK_PLUS).size(15.0), |ui| {
             ui.label(RichText::new(t("Effect over the layers below")).strong());
@@ -286,21 +338,19 @@ fn toolbar(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             let target = if matches!(app.viewport.paint.target, EditTarget::MaskItem(_)) { Target::Mask } else { Target::Content };
             ui.label(RichText::new(if target == Target::Mask { t("Add to the mask") } else { t("Add to the layer content") }).strong());
             if let Some(id) = effect_picker(ui, &mut app.layers_ui.search, target) {
-                add_effect_to_active(app, &id);
+                add_effect_to_selected(app, &id);
             }
         })
         .response
-        .on_hover_text(t("Add effect… (to the selected layer or its mask)"));
+        .on_hover_text(t("Add effect… (to every selected layer or its mask)"));
         if button(ui, icon::COPY, t("Duplicate (Ctrl+J)")).clicked()
             && let Some(a) = active
         {
             actions.push(Action::Duplicate(a));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if button(ui, icon::TRASH, t("Delete (Del)")).clicked()
-                && let Some(a) = active
-            {
-                actions.push(Action::Delete(a));
+            if button(ui, icon::TRASH, t("Delete (Del)")).clicked() && active.is_some() {
+                actions.push(Action::DeleteSelected);
             }
         });
     });
@@ -345,7 +395,7 @@ fn draw_list(
 
 fn node_row(app: &mut App, ui: &mut egui::Ui, node: &Node, depth: usize, actions: &mut Vec<Action>) -> egui::Rect {
     let paint = &app.viewport.paint;
-    let selected = paint.active == Some(node.id);
+    let selected = paint.active == Some(node.id) || (app.layers_ui.selection.len() > 1 && app.layers_ui.selection.contains(&node.id) && paint.active.is_some_and(|a| app.layers_ui.selection.contains(&a)));
     let target = paint.target;
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, ROW_HEIGHT), Sense::click_and_drag());
@@ -492,7 +542,9 @@ fn node_row(app: &mut App, ui: &mut egui::Ui, node: &Node, depth: usize, actions
     if response.double_clicked() {
         actions.push(Action::StartRename(node.id));
     } else if response.clicked() {
-        actions.push(Action::Select(node.id, EditTarget::Content));
+        actions.push(Action::Click(node.id, ui.input(|i| i.modifiers)));
+    } else if response.secondary_clicked() && !app.selected_layers().contains(&node.id) {
+        actions.push(Action::Click(node.id, egui::Modifiers::NONE));
     }
     if response.drag_started_by(egui::PointerButton::Primary) {
         app.layers_ui.dragging = Some(node.id);
@@ -503,7 +555,7 @@ fn node_row(app: &mut App, ui: &mut egui::Ui, node: &Node, depth: usize, actions
             ui.close();
         }
         if ui.button(format!("{} {}", icon::FOLDER_PLUS, t("Group into folder"))).clicked() {
-            actions.push(Action::Group(node.id));
+            actions.push(Action::GroupSelected);
             ui.close();
         }
         if ui.button(t("Rename")).clicked() {
@@ -511,7 +563,7 @@ fn node_row(app: &mut App, ui: &mut egui::Ui, node: &Node, depth: usize, actions
             ui.close();
         }
         if ui.button(format!("{} {}", icon::TRASH, t("Delete"))).clicked() {
-            actions.push(Action::Delete(node.id));
+            actions.push(Action::DeleteSelected);
             ui.close();
         }
         ui.separator();
@@ -753,7 +805,6 @@ fn apply(app: &mut App, actions: Vec<Action>) {
             }
             Action::Move { node, parent, index } => paint.move_node(node, parent, index),
             Action::Duplicate(id) => paint.duplicate_node(id),
-            Action::Delete(id) => paint.delete_node(id),
             Action::AddMask(id, white) => paint.add_mask(id, white),
             Action::DeleteMask(id) => paint.delete_mask(id),
             Action::ToggleMask(id) => paint.edit_node(id, true, |n| {
@@ -772,8 +823,54 @@ fn apply(app: &mut App, actions: Vec<Action>) {
                     paint.edit_node(id, true, |n| n.name = name);
                 }
             }
-            Action::Group(id) => {
-                paint.group(&[id]);
+            Action::DeleteSelected => {
+                let ids = app.selected_layers();
+                app.viewport.paint.delete_nodes(&ids);
+                app.layers_ui.selection.clear();
+            }
+            Action::GroupSelected => {
+                let ids = app.selected_layers();
+                if let Some(folder) = app.viewport.paint.group(&ids) {
+                    app.layers_ui.selection = vec![folder];
+                    app.layers_ui.anchor = Some(folder);
+                }
+            }
+            Action::Click(id, mods) => {
+                let ui_state = &mut app.layers_ui;
+                let active = paint.active;
+                if mods.shift {
+                    let from = ui_state.anchor.or(active).unwrap_or(id);
+                    let pos = |x: u64| ui_state.visible.iter().position(|v| *v == x);
+                    if let (Some(a), Some(b)) = (pos(from), pos(id)) {
+                        let (lo, hi) = (a.min(b), a.max(b));
+                        ui_state.selection = ui_state.visible[lo..=hi].to_vec();
+                    } else {
+                        ui_state.selection = vec![id];
+                    }
+                    ui_state.anchor = Some(from);
+                    paint.active = Some(id);
+                } else if mods.command {
+                    // Start from what is selected now (a lone active node counts).
+                    if !active.is_some_and(|a| ui_state.selection.contains(&a)) {
+                        ui_state.selection = active.into_iter().collect();
+                    }
+                    if let Some(i) = ui_state.selection.iter().position(|x| *x == id) {
+                        ui_state.selection.remove(i);
+                        if active == Some(id) {
+                            paint.active = ui_state.selection.last().copied();
+                        }
+                    } else {
+                        ui_state.selection.push(id);
+                        paint.active = Some(id);
+                    }
+                    ui_state.anchor = Some(id);
+                } else {
+                    ui_state.selection = vec![id];
+                    ui_state.anchor = Some(id);
+                    paint.active = Some(id);
+                }
+                paint.selected_effect = None;
+                paint.target = EditTarget::Content;
             }
         }
     }

@@ -745,32 +745,73 @@ impl Painter {
         self.mark_all_dirty();
     }
 
-    /// Groups the given sibling nodes into a new folder (Ctrl+G).
+    /// Groups the given nodes into a new folder (Ctrl+G). They may live in different folders:
+    /// the folder takes the place of the shallowest, topmost one, and children keep their
+    /// document order. Nodes inside another selected node move with it.
     pub fn group(&mut self, ids: &[u64]) -> Option<u64> {
-        let first = *ids.first()?;
-        self.doc.find(first)?;
+        let order = self.selection_roots(ids);
+        let doc = &self.doc;
+        let anchor = *order.iter().rev().min_by_key(|id| doc.path_of(**id).map_or(usize::MAX, |p| p.len()))?;
         self.checkpoint();
         let folder_id = self.doc.alloc_id();
         let mut count = 0;
         self.doc.visit(|_| count += 1);
         let mut folder = Node::new(folder_id, format!("Folder {}", count + 1), NodeKind::Folder { expanded: true });
-        let (list, index) = self.doc.parent_list_mut(first)?;
         let mut taken = Vec::new();
-        let mut i = 0;
-        let mut insert_at = index;
-        while i < list.len() {
-            if ids.contains(&list[i].id) {
-                insert_at = insert_at.min(i);
-                taken.push(list.remove(i));
-            } else {
-                i += 1;
+        for &id in &order {
+            if id != anchor {
+                taken.push((id, self.doc.remove(id)?));
             }
         }
-        folder.children = taken;
-        list.insert(insert_at.min(list.len()), folder);
+        let (list, index) = self.doc.parent_list_mut(anchor)?;
+        let anchor_node = list.remove(index);
+        folder.children = order
+            .iter()
+            .filter_map(|id| if *id == anchor { Some(anchor_node.clone()) } else { taken.iter().find(|(t, _)| t == id).map(|(_, n)| n.clone()) })
+            .collect();
+        list.insert(index.min(list.len()), folder);
         self.active = Some(folder_id);
+        self.target = EditTarget::Content;
         self.mark_all_dirty();
         Some(folder_id)
+    }
+
+    /// Deletes several nodes as one undo step.
+    pub fn delete_nodes(&mut self, ids: &[u64]) {
+        let roots = self.selection_roots(ids);
+        if roots.is_empty() {
+            return;
+        }
+        self.checkpoint();
+        for id in &roots {
+            self.doc.remove(*id);
+        }
+        if self.active.is_none_or(|a| self.doc.find(a).is_none()) {
+            self.active = self.doc.nodes.last().map(|n| n.id);
+            self.target = EditTarget::Content;
+        }
+        self.mark_all_dirty();
+    }
+
+    /// Existing ids in document order, without those inside another listed node.
+    fn selection_roots(&self, ids: &[u64]) -> Vec<u64> {
+        let mut order = Vec::new();
+        self.doc.visit(|n| {
+            if ids.contains(&n.id) {
+                order.push(n.id);
+            }
+        });
+        let inside = |id: u64| {
+            order.iter().any(|&o| {
+                o != id
+                    && self.doc.find(o).is_some_and(|n| {
+                        let mut found = false;
+                        n.visit(&mut |c| found |= c.id == id && c.id != o);
+                        found
+                    })
+            })
+        };
+        order.iter().copied().filter(|&id| !inside(id)).collect()
     }
 
     /// Adds a mask (fill white / black + a paint item) and targets the paint item.

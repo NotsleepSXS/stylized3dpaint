@@ -281,3 +281,78 @@ fn every_effect_compiles() {
     }
     assert!(failed.is_empty(), "effects failed to compile:\n{}", failed.join("\n"));
 }
+
+fn max_diff(a: &[f32], b: &[f32]) -> f32 {
+    a.iter().zip(b).map(|(x, y)| (x - y).abs()).fold(0.0, f32::max)
+}
+
+/// Moving layers into folders (group, drag into a folder, multi-select group across folders)
+/// must not change the result: a folder of normal-blended children at 100% is transparent.
+#[test]
+fn folders_do_not_change_the_result() {
+    let Some(mut s) = Scene::new() else { return };
+    // Several texture sets: the test model (monkey + crate).
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/test/monkey_crate.glb");
+    let mesh = s3dp_core::import::load(&path).unwrap();
+    s.vp.set_mesh(&s.device, &s.queue, &mesh, TEX);
+    let b = mesh.bounds();
+    s.cam.frame(b.center(), b.radius(), 1.0);
+    let sets = s.vp.paint.sets.len();
+    assert!(sets >= 2, "test model has several texture sets ({sets})");
+    let chans = [ChannelId::BaseColor, ChannelId::Roughness, ChannelId::Height];
+    let read = |s: &mut Scene| {
+        s.render();
+        (0..sets).flat_map(|set| chans.iter().map(move |c| (set, *c))).map(|(set, c)| s.vp.paint.read_final(&s.device, &s.queue, set, c).unwrap().1).collect::<Vec<_>>()
+    };
+    let check = |label: &str, a: &[Vec<f32>], b: &[Vec<f32>]| {
+        for (c, (x, y)) in (0..).flat_map(|set| chans.iter().map(move |c| (set, *c))).zip(a.iter().zip(b)) {
+            let d = max_diff(x, y);
+            println!("{label}: {c:?} max diff {d:.5}");
+            assert!(d < 2e-3, "{label}: {c:?} changed by {d}");
+        }
+    };
+    let layer = s.vp.paint.active.unwrap();
+    let mut brush = red_brush();
+    brush.channels = ChannelSet::only(ChannelId::BaseColor);
+    brush.channels.set(ChannelId::Roughness, true);
+    brush.values.set(ChannelId::Roughness, [0.2; 3]);
+    brush.hardness = 0.3;
+    s.stroke(brush, &[[100.0, 120.0], [128.0, 128.0], [150.0, 140.0]]);
+    let mut blue = ChannelValues::defaults();
+    blue.set(ChannelId::BaseColor, [0.1, 0.2, 0.9]);
+    let fill = s.vp.paint.add_node(NodeKind::Fill(blue), |n, _| n.blending.default.opacity = 0.4);
+    // Content effects that read neighbours / world space / baked maps.
+    let fx: Vec<String> = std::env::var("FX").unwrap_or_else(|_| "blur,hue_shift_by_light,warp,edge_highlight,stylize_master".into()).split(',').map(String::from).collect();
+    for (i, id) in fx.iter().enumerate() {
+        let e = s.effect(id, &[]);
+        let target = if i % 2 == 0 { layer } else { fill };
+        s.vp.paint.edit_node(target, false, |n| n.effects.push(e));
+    }
+    let before = read(&mut s);
+
+    let g = s.vp.paint.group(&[layer]).unwrap();
+    check("group one layer", &before, &read(&mut s));
+
+    let f = s.vp.paint.add_node(NodeKind::Folder { expanded: true }, |_, _| {});
+    s.vp.paint.move_node(fill, Some(f), 0);
+    check("move fill into a folder", &before, &read(&mut s));
+
+    // Layer (inside g) and fill (inside f) into one new folder, document order kept.
+    let both = s.vp.paint.group(&[fill, layer]).unwrap();
+    let kids: Vec<u64> = s.vp.paint.doc.find(both).unwrap().children.iter().map(|n| n.id).collect();
+    assert_eq!(kids, vec![layer, fill], "children in document order");
+    // f was created inside the active folder g; the new folder takes the place of the
+    // shallowest selected node (the layer, in g), and f is left empty.
+    assert!(s.vp.paint.doc.find(f).is_some_and(|n| n.children.is_empty()));
+    assert!(s.vp.paint.doc.find(g).is_some_and(|n| n.children.first().map(|c| c.id) == Some(both)));
+    check("group across folders", &before, &read(&mut s));
+
+    // A folder and a node inside it: the child moves with its folder.
+    let outer = s.vp.paint.group(&[both, fill]).unwrap();
+    let o = s.vp.paint.doc.find(outer).unwrap();
+    assert_eq!(o.children.len(), 1);
+    assert_eq!(o.children[0].id, both);
+
+    s.vp.paint.delete_nodes(&[f, layer]);
+    assert!(s.vp.paint.doc.find(f).is_none() && s.vp.paint.doc.find(layer).is_none() && s.vp.paint.doc.find(fill).is_some());
+}
