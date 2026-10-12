@@ -8,4 +8,4 @@ pub mod viewport;
 
 pub use egui_wgpu::wgpu;
 pub use paint::{Brush, ChannelTextures, EditTarget, Inspect, Painter};
-pub use viewport::{ShadingMode, Viewport};
+pub use viewport::{Preview, ShadingMode, Viewport};

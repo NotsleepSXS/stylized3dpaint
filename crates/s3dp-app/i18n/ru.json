@@ -274,5 +274,9 @@
  "Gamma": "Гамма",
  "In White": "Вход: белый",
  "Out Black": "Выход: чёрный",
- "Out White": "Выход: белый"
+ "Out White": "Выход: белый",
+ "Preview": "Превью",
+ "On the model, from the viewport camera": "На модели, с камеры вьюпорта",
+ "Flat texture (UV layout of the first texture set)": "Плоская текстура (развёртка первого набора текстур)",
+ "Material": "Материал"
 }

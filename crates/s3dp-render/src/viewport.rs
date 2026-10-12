@@ -112,6 +112,27 @@ pub struct Viewport {
     bind_group: wgpu::BindGroup,
     mesh: Option<GpuMesh>,
     targets: Option<Targets>,
+    /// Small extra view (Properties preview): own targets and camera buffer.
+    preview: Option<PreviewTargets>,
+    /// Incremented whenever the main view is redrawn (previews follow it).
+    frame_id: u64,
+}
+
+struct PreviewTargets {
+    targets: Targets,
+    globals: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    bgl: wgpu::BindGroupLayout,
+}
+
+/// What a preview shows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Preview {
+    /// None: the material; Some(node): that node's mask.
+    pub mask_of: Option<u64>,
+    /// Flat texture (UV layout of the texture set) instead of the 3D model.
+    pub uv: bool,
+    pub set: usize,
 }
 
 impl Viewport {
@@ -275,6 +296,8 @@ impl Viewport {
             bind_group,
             mesh: None,
             targets: None,
+            preview: None,
+            frame_id: 0,
         }
     }
 
@@ -352,6 +375,13 @@ impl Viewport {
         Some((t.size[0], t.size[1], data))
     }
 
+    /// RGBA8 pixels of the last preview.
+    pub fn read_preview(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Option<(u32, u32, Vec<u8>)> {
+        let t = &self.preview.as_ref()?.targets;
+        let data = crate::gpu::read_texture(device, queue, &t.resolve_tex)?;
+        Some((t.size[0], t.size[1], data))
+    }
+
     /// Starts baking mesh maps for every texture set (advanced during `render`).
     pub fn start_bake(&mut self, device: &wgpu::Device, low: &Mesh, high: Option<&Mesh>, settings: &BakeSettings) {
         self.bake = Some(BakeJob::new(device, low, high, settings, self.texture_size, self.paint.sets.len()));
@@ -393,39 +423,102 @@ impl Viewport {
         if self.targets.as_ref().is_some_and(|t| t.size == size) {
             return false;
         }
-        let make_tex = |label, format, samples, usage| {
-            device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some(label),
-                    size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
-                    mip_level_count: 1,
-                    sample_count: samples,
-                    dimension: wgpu::TextureDimension::D2,
-                    format,
-                    usage,
-                view_formats: &[],
-            })
-        };
-        let make = |label, format, samples, usage| make_tex(label, format, samples, usage).create_view(&Default::default());
-        let resolve_tex = make_tex(
-            "viewport color",
-            COLOR_FORMAT,
-            1,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
-        );
-        self.targets = Some(Targets {
-            size,
-            msaa: make("viewport msaa", COLOR_FORMAT, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT),
-            depth: make("viewport depth", DEPTH_FORMAT, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT),
-            resolve: resolve_tex.create_view(&Default::default()),
-            resolve_tex,
-            scene_depth: make(
-                "scene depth",
-                SCENE_DEPTH_FORMAT,
-                1,
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            ),
-        });
+        self.targets = Some(make_targets(device, size));
         true
+    }
+
+    /// Id of the main view's last redraw (changes whenever its image changes).
+    pub fn frame_id(&self) -> u64 {
+        self.frame_id
+    }
+
+    /// Renders a small preview (material or a node's mask, 3D or flat UV) into its own target.
+    /// Does not apply dabs or recomposite; returns the view and whether it was recreated.
+    pub fn render_preview(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, size: [u32; 2], camera: &OrbitCamera, what: Preview) -> Option<(&wgpu::TextureView, bool)> {
+        let mesh = self.mesh.as_ref()?;
+        let size = [size[0].max(1), size[1].max(1)];
+        let mut recreated = false;
+        if self.preview.as_ref().is_none_or(|p| p.targets.size != size) {
+            let bgl = match self.preview.take() {
+                Some(p) => p.bgl,
+                None => device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("preview globals"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                        count: None,
+                    }],
+                }),
+            };
+            let globals = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("preview globals"),
+                size: std::mem::size_of::<Globals>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("preview globals"),
+                layout: &self.pipeline.get_bind_group_layout(0),
+                entries: &[wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() }],
+            });
+            self.preview = Some(PreviewTargets { targets: make_targets(device, size), globals, bind_group, bgl });
+            recreated = true;
+        }
+        let pv = self.preview.as_ref()?;
+        let aspect = size[0] as f32 / size[1] as f32;
+        let view_proj: Mat4 = camera.projection(aspect) * camera.view();
+        let mode = match (what.mask_of, what.uv) {
+            (Some(_), _) => ShadingMode::Mask,
+            (None, true) => ShadingMode::Unlit,
+            (None, false) => ShadingMode::Lit,
+        };
+        let globals = Globals {
+            view_proj: view_proj.to_cols_array_2d(),
+            eye: camera.eye().extend(1.0).into(),
+            params: [mode.gpu_id() as f32, 8.0, what.uv as u32 as f32, 0.0],
+        };
+        queue.write_buffer(&pv.globals, 0, bytemuck::bytes_of(&globals));
+        let inspect = what.mask_of.map_or(Inspect::None, Inspect::Mask);
+        let sets: Vec<(std::ops::Range<u32>, wgpu::BindGroup)> = self
+            .paint
+            .sets
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !what.uv || *i == what.set)
+            .filter_map(|(i, s)| Some((s.index_range(), self.paint.view_group(device, i, inspect)?)))
+            .collect();
+        let t = &pv.targets;
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("preview"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &t.msaa,
+                    depth_slice: None,
+                    resolve_target: Some(&t.resolve),
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.035, g: 0.037, b: 0.042, a: 1.0 }), store: wgpu::StoreOp::Discard },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &t.depth,
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &pv.bind_group, &[]);
+            pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+            pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+            for (range, bg) in &sets {
+                pass.set_bind_group(1, bg, &[]);
+                pass.draw_indexed(range.clone(), 0, 0..1);
+            }
+        }
+        queue.submit([encoder.finish()]);
+        Some((&self.preview.as_ref()?.targets.resolve, recreated))
     }
 
     /// Renders the scene, first applying any queued paint dabs (in the pixel space of the
@@ -482,6 +575,7 @@ impl Viewport {
             return (&self.targets.as_ref().unwrap().resolve, false);
         }
         self.shown = Some(shown);
+        self.frame_id += 1;
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("viewport"),
@@ -548,5 +642,30 @@ impl Viewport {
         if let Some(busy) = self.paint.take_submitted_recompose() {
             queue.on_submitted_work_done(move || busy.store(false, std::sync::atomic::Ordering::Release));
         }
+    }
+}
+
+fn make_targets(device: &wgpu::Device, size: [u32; 2]) -> Targets {
+    let make_tex = |label, format, samples, usage| {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: samples,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage,
+            view_formats: &[],
+        })
+    };
+    let make = |label, format, samples, usage| make_tex(label, format, samples, usage).create_view(&Default::default());
+    let resolve_tex = make_tex("viewport color", COLOR_FORMAT, 1, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC);
+    Targets {
+        size,
+        msaa: make("viewport msaa", COLOR_FORMAT, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT),
+        depth: make("viewport depth", DEPTH_FORMAT, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT),
+        resolve: resolve_tex.create_view(&Default::default()),
+        resolve_tex,
+        scene_depth: make("scene depth", SCENE_DEPTH_FORMAT, 1, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING),
     }
 }

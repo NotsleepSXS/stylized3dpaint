@@ -69,6 +69,9 @@ pub struct App {
     pub render_state: egui_wgpu::RenderState,
     pub viewport: Viewport,
     viewport_tex: Option<egui::TextureId>,
+    /// Properties preview texture and what it last showed (re-rendered when that changes).
+    preview_tex: Option<egui::TextureId>,
+    preview_key: Option<(u64, s3dp_render::Preview, [u32; 2])>,
     camera: OrbitCamera,
     pub shading: ShadingMode,
     pub mesh: Mesh,
@@ -126,6 +129,8 @@ impl App {
             render_state,
             viewport,
             viewport_tex: None,
+            preview_tex: None,
+            preview_key: None,
             camera: OrbitCamera::default(),
             shading: ShadingMode::default(),
             mesh: Mesh::default(),
@@ -432,6 +437,37 @@ impl App {
     }
 
     // ------------------------------------------------------------------ viewport
+
+    /// Small preview of the material / a mask (3D from the main camera, or the flat texture).
+    pub(crate) fn preview_ui(&mut self, ui: &mut egui::Ui, what: s3dp_render::Preview) {
+        let w = ui.available_width().clamp(80.0, 420.0);
+        let h = if what.uv { w } else { (w * 0.62).round() };
+        let ppp = ui.ctx().pixels_per_point();
+        let size = [(w * ppp).round() as u32, (h * ppp).round() as u32];
+        let key = (self.viewport.frame_id(), what, size);
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::hover());
+        if self.preview_key != Some(key) || self.preview_tex.is_none() {
+            let rs = self.render_state.clone();
+            // Same view direction as the viewport, framed to fit the preview.
+            let mut cam = self.camera.clone();
+            let b = self.mesh.bounds();
+            cam.frame(b.center(), b.radius(), w / h);
+            cam.distance *= 0.8;
+            if let Some((view, recreated)) = self.viewport.render_preview(&rs.device, &rs.queue, size, &cam, what) {
+                let mut renderer = rs.renderer.write();
+                match self.preview_tex {
+                    Some(id) if recreated => renderer.update_egui_texture_from_wgpu_texture(&rs.device, view, wgpu::FilterMode::Linear, id),
+                    Some(_) => {}
+                    None => self.preview_tex = Some(renderer.register_native_texture(&rs.device, view, wgpu::FilterMode::Linear)),
+                }
+                self.preview_key = Some(key);
+            }
+        }
+        if let Some(tex) = self.preview_tex {
+            ui.painter().image(tex, rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+            ui.painter().rect_stroke(rect, 2.0, egui::Stroke::new(1.0, theme::FIELD_BORDER), egui::StrokeKind::Inside);
+        }
+    }
 
     pub(crate) fn viewport_ui(&mut self, ui: &mut egui::Ui) {
         let rect = ui.available_rect_before_wrap();

@@ -1,7 +1,7 @@
 struct Globals {
     view_proj: mat4x4<f32>,
     eye: vec4<f32>,
-    // x: shading mode, y: checker scale
+    // x: shading mode, y: checker scale, z: UV layout (1 = draw the mesh flat in UV space)
     params: vec4<f32>,
 };
 
@@ -37,6 +37,10 @@ struct VsOut {
 fn vs_main(v: VsIn) -> VsOut {
     var o: VsOut;
     o.clip = g.view_proj * vec4<f32>(v.position, 1.0);
+    if (g.params.z > 0.5) {
+        // Flat texture view: UV (0,0) top-left -> clip (-1, 1).
+        o.clip = vec4<f32>(v.uv.x * 2.0 - 1.0, 1.0 - v.uv.y * 2.0, 0.5, 1.0);
+    }
     o.world = v.position;
     o.normal = v.normal;
     o.uv = v.uv;

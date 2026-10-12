@@ -389,6 +389,24 @@ fn mask_editor(app: &mut App, ui: &mut egui::Ui, node: &Node) {
     }
 }
 
+/// Collapsible preview of what the effect changes: the layer mask for mask effects, the
+/// material otherwise; 3D (main camera) or the flat texture (UV).
+fn effect_preview(app: &mut App, ui: &mut egui::Ui, node: &Node, effect_id: u64) {
+    let on_mask = node.mask.as_ref().is_some_and(|m| m.items.iter().any(|i| matches!(&i.kind, MaskItemKind::Effect(x) if x.id == effect_id)));
+    let uv_id = egui::Id::new("effect_preview_uv");
+    let mut uv: bool = ui.data_mut(|d| *d.get_persisted_mut_or(uv_id, false));
+    egui::CollapsingHeader::new(RichText::new(format!("{} {}", icon::EYE, t("Preview"))).strong()).id_salt("effect_preview").default_open(true).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut uv, false, "3D").on_hover_text(t("On the model, from the viewport camera"));
+            ui.selectable_value(&mut uv, true, "UV").on_hover_text(t("Flat texture (UV layout of the first texture set)"));
+            ui.label(RichText::new(if on_mask { t("Layer mask") } else { t("Material") }).small().color(theme::TEXT_FAINT));
+        });
+        let what = s3dp_render::Preview { mask_of: on_mask.then_some(node.id), uv, set: 0 };
+        app.preview_ui(ui, what);
+    });
+    ui.data_mut(|d| d.insert_persisted(uv_id, uv));
+}
+
 fn effect_editor(app: &mut App, ui: &mut egui::Ui, node: &Node, effect_id: u64) {
     let Some(e) = find_effect(node, effect_id).cloned() else { return };
     let Some(def) = registry().get(&e.def) else {
@@ -416,6 +434,7 @@ fn effect_editor(app: &mut App, ui: &mut egui::Ui, node: &Node, effect_id: u64) 
             ui.label(RichText::new(d).color(theme::TEXT_FAINT).small());
         }
     }
+    effect_preview(app, ui, node, effect_id);
     if let Some(err) = app.viewport.paint.errors.get(&e.id) {
         ui.colored_label(theme::DANGER, format!("{} {}", icon::WARNING, t("Effect failed:")));
         ui.label(RichText::new(err.lines().take(4).collect::<Vec<_>>().join("\n")).small().color(theme::DANGER));

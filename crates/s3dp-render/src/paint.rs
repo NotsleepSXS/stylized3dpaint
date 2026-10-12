@@ -507,24 +507,29 @@ impl Painter {
 
     /// Viewport group 1: 7 channels, baked AO, baked normal, inspect, sampler.
     pub fn rebuild_view_groups(&mut self, device: &wgpu::Device) {
-        let Some(layout) = self.view_layout.clone() else { return };
         for si in 0..self.sets.len() {
-            let inspect = self.inspect_texture(si).unwrap_or_else(|| self.dummy.clone());
-            let set = &self.sets[si];
-            let mut views: Vec<wgpu::TextureView> = VIEW_CHANNELS.iter().map(|c| gpu::view(&set.display[c])).collect();
-            views.push(gpu::view(&set.baked[BakedMap::AmbientOcclusion.index()]));
-            views.push(gpu::view(&set.baked[BakedMap::Normal.index()]));
-            views.push(gpu::view(&inspect));
-            let mut entries: Vec<wgpu::BindGroupEntry> = views.iter().enumerate().map(|(i, v)| gpu::tex_entry(i as u32, v)).collect();
-            entries.push(wgpu::BindGroupEntry { binding: views.len() as u32, resource: wgpu::BindingResource::Sampler(&self.sampler) });
-            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("paint view"), layout: &layout, entries: &entries });
-            self.sets[si].view_bg = Some(bg);
+            let bg = self.view_group(device, si, self.inspect);
+            self.sets[si].view_bg = bg;
         }
     }
 
-    fn inspect_texture(&self, si: usize) -> Option<wgpu::Texture> {
+    /// Viewport bind group of a texture set with `inspect` as the inspected texture.
+    pub fn view_group(&self, device: &wgpu::Device, si: usize, inspect: Inspect) -> Option<wgpu::BindGroup> {
+        let layout = self.view_layout.as_ref()?;
+        let tex = self.inspect_texture_for(si, inspect).unwrap_or_else(|| self.dummy.clone());
         let set = self.sets.get(si)?;
-        match self.inspect {
+        let mut views: Vec<wgpu::TextureView> = VIEW_CHANNELS.iter().map(|c| gpu::view(&set.display[c])).collect();
+        views.push(gpu::view(&set.baked[BakedMap::AmbientOcclusion.index()]));
+        views.push(gpu::view(&set.baked[BakedMap::Normal.index()]));
+        views.push(gpu::view(&tex));
+        let mut entries: Vec<wgpu::BindGroupEntry> = views.iter().enumerate().map(|(i, v)| gpu::tex_entry(i as u32, v)).collect();
+        entries.push(wgpu::BindGroupEntry { binding: views.len() as u32, resource: wgpu::BindingResource::Sampler(&self.sampler) });
+        Some(device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("paint view"), layout, entries: &entries }))
+    }
+
+    fn inspect_texture_for(&self, si: usize, inspect: Inspect) -> Option<wgpu::Texture> {
+        let set = self.sets.get(si)?;
+        match inspect {
             Inspect::None => None,
             Inspect::Channel(c) => set.display.get(&c).cloned(),
             Inspect::Baked(m) => Some(set.baked[m.index()].clone()),
