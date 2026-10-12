@@ -12,6 +12,13 @@ Written in Rust with wgpu and egui.
 *Test model with a Stylized bake and an effect stack: metal edge wear, edge highlight, cavity
 darken, hue shift by light — no hand painting.*
 
+### In use on a real model
+
+![Stylized3DPaint texturing a real model: 3D + UV view, Stylization filter settings and the layer stack](docs/images/in_use_real_model.png)
+
+*A real asset being textured: the viewport in 3D + UV mode, the Stylization filter's settings
+with its preview on a sample shape, and a layer stack of fills, folders, masks and effects.*
+
 ## Build
 
 Needs a recent stable Rust (edition 2024) and a Vulkan / Metal / DX12 capable GPU.
