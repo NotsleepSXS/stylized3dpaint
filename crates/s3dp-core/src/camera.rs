@@ -30,9 +30,13 @@ impl OrbitCamera {
         glam::camera::rh::view::look_at_mat4(self.eye(), self.target, Vec3::Y)
     }
 
+    /// Near and far clip distances, scaled with the orbit distance.
+    pub fn clip_planes(&self) -> (f32, f32) {
+        ((self.distance * 0.01).max(1e-4), self.distance * 100.0 + 10.0)
+    }
+
     pub fn projection(&self, aspect: f32) -> Mat4 {
-        let near = (self.distance * 0.01).max(1e-4);
-        let far = self.distance * 100.0 + 10.0;
+        let (near, far) = self.clip_planes();
         glam::camera::rh::proj::directx::perspective(self.fov_y, aspect.max(1e-3), near, far)
     }
 

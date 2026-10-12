@@ -21,6 +21,7 @@ tobj = "4"
 ufbx = "0.11"
 rfd = "0.17"
 anyhow = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }
 log = "0.4"
 env_logger = "0.11"
 

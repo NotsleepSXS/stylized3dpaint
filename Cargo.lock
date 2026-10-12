@@ -2331,7 +2331,9 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "glam",
+ "image",
  "log",
+ "pollster 1.0.1",
  "s3dp-core",
 ]
 
@@ -2567,6 +2569,7 @@ dependencies = [
  "egui-wgpu",
  "env_logger",
  "glam",
+ "image",
  "log",
  "rfd",
  "s3dp-core",

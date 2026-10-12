@@ -3,7 +3,7 @@
 Open-source 3D texture painter focused on stylized / hand-painted texturing.
 Written in Rust with wgpu and egui.
 
-**Status:** early development (milestone M0: model import + viewport).
+**Status:** early development — milestone M1: brush painting on the mesh.
 
 ## Build
 
@@ -21,11 +21,15 @@ Supported model formats: glTF/GLB, FBX, OBJ.
 | Pan    | Alt+MMB, Shift+MMB or RMB |
 | Zoom   | Wheel or Alt+RMB |
 | Frame  | F |
+| Paint  | LMB |
+| Brush size | [ and ] |
+| Brush / eraser | B / E |
+| Undo / redo | Ctrl+Z / Ctrl+Shift+Z |
 
 ## Roadmap
 
 - **M0** – window, model import, orbit camera, clay/UV/normal shading ✅
-- **M1** – brush painting on the mesh (texture-space projection, seam dilation, undo)
+- **M1** – brush painting on the mesh (texture-space projection, seam dilation, undo, PNG export) ✅
 - **M2** – layers, masks, blend modes, channels, `.s3dp` project files
 - **M3** – GPU bakers: AO, curvature, thickness, position, ID
 - **M4** – stylized generators (edge highlight, cavity, height gradient, toon ramp, palettes), toon & PBR viewport
