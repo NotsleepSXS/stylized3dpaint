@@ -18,6 +18,7 @@ pub const ACCENT_SOFT: Color32 = Color32::from_rgb(40, 70, 105);
 pub const SEPARATOR: Color32 = Color32::from_gray(30);
 pub const ROW_SELECTED: Color32 = Color32::from_gray(82);
 pub const DANGER: Color32 = Color32::from_rgb(236, 91, 98);
+pub const WARNING: Color32 = Color32::from_rgb(232, 176, 70);
 
 pub fn apply(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();

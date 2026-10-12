@@ -1,8 +1,10 @@
 mod app;
 mod color_picker;
+mod i18n;
 mod project;
 mod theme;
 mod ui_bake;
+mod ui_export;
 mod ui_effects;
 mod ui_layers;
 mod ui_panels;

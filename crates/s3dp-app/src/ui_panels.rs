@@ -1,12 +1,14 @@
-//! Menu bar, tool bar, options bar, status bar and the right dock panels.
+//! Menu bar, tool bar, options bar, status bar and the right dock (layers on top, properties
+//! below, as in Substance — spec §8).
 
 use egui::{Color32, RichText};
 use egui_phosphor::regular as icon;
-use s3dp_core::{Channel, ChannelMask, ChannelValues, LayerKind};
+use s3dp_core::{BakedMap, ChannelId};
 use s3dp_render::ShadingMode;
 
-use crate::app::{App, TEXTURE_SIZES, Tool};
-use crate::{theme, ui_layers};
+use crate::app::{App, PropTab, TEXTURE_SIZES, Tool};
+use crate::i18n::t;
+use crate::{theme, ui_effects, ui_layers};
 
 pub fn to_color32(c: [f32; 3]) -> Color32 {
     let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
@@ -17,24 +19,21 @@ pub fn from_color32(c: Color32) -> [f32; 3] {
     [c.r() as f32 / 255.0, c.g() as f32 / 255.0, c.b() as f32 / 255.0]
 }
 
-/// Whether an edit from `response` should start a new undo step: the first frame of a
-/// drag, or any non-drag change (click, typing).
+/// Whether an edit from `response` starts a new undo step: the first frame of a drag, or any
+/// non-drag change (click, typing).
 pub fn starts_edit(response: &egui::Response) -> bool {
     response.drag_started() || !response.dragged()
 }
 
-/// Sets the slider width so a two-column grid row (label + slider + value box) fits the
-/// panel: `label` is the width reserved for the widest label in the grid.
+/// Slider width so a grid row (label + slider + value box) fits the panel; `label` is the
+/// width reserved for the widest label of the grid.
 pub fn fit_sliders(ui: &mut egui::Ui, label: f32) {
-    let value_box = 56.0;
-    let spacing = 24.0;
-    ui.spacing_mut().slider_width = (ui.available_width() - label - value_box - spacing).max(40.0);
+    ui.spacing_mut().slider_width = (ui.available_width() - label - 56.0 - 24.0).max(40.0);
 }
 
 /// Square icon button; highlighted when `selected`.
 pub fn icon_button(ui: &mut egui::Ui, glyph: &str, selected: bool, tooltip: &str) -> egui::Response {
-    let size = egui::vec2(32.0, 30.0);
-    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(32.0, 30.0), egui::Sense::click());
     let fill = if selected {
         theme::ACCENT_SOFT
     } else if response.hovered() {
@@ -54,8 +53,7 @@ pub fn icon_button(ui: &mut egui::Ui, glyph: &str, selected: bool, tooltip: &str
 /// Small toggle chip (channel toggles).
 pub fn chip(ui: &mut egui::Ui, text: &str, on: bool, tooltip: &str) -> egui::Response {
     let galley = ui.painter().layout_no_wrap(text.to_owned(), egui::FontId::proportional(11.0), Color32::WHITE);
-    let size = egui::vec2(galley.size().x + 12.0, 20.0);
-    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(galley.size().x + 12.0, 20.0), egui::Sense::click());
     let fill = match (on, response.hovered()) {
         (true, _) => theme::ACCENT,
         (false, true) => theme::HOVER,
@@ -67,112 +65,114 @@ pub fn chip(ui: &mut egui::Ui, text: &str, on: bool, tooltip: &str) -> egui::Res
     response.on_hover_text(tooltip)
 }
 
-pub fn channel_chips(ui: &mut egui::Ui, mask: &mut ChannelMask, what: &str) -> bool {
-    let mut changed = false;
-    for c in Channel::ALL {
-        if chip(ui, c.short(), mask.has(c), &format!("{} — {what}", c.label())).clicked() {
-            mask.set(c, !mask.has(c));
-            changed = true;
-        }
-    }
-    changed
-}
-
-/// Header strip of a dock panel (like Photoshop's panel tabs).
-pub fn panel_header(ui: &mut egui::Ui, title: &str) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 24.0), egui::Sense::hover());
+/// Header strip of a dock panel with tabs. Returns the clicked tab.
+fn tab_strip<T: PartialEq + Copy>(ui: &mut egui::Ui, tabs: &[(T, &str)], current: T) -> Option<T> {
+    let mut clicked = None;
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), egui::Sense::hover());
     ui.painter().rect_filled(rect, 0.0, theme::DOCK);
-    let tab = egui::Rect::from_min_size(rect.min + egui::vec2(4.0, 3.0), egui::vec2(rect.width().min(120.0), 21.0));
-    ui.painter().rect_filled(tab, egui::CornerRadius { nw: 3, ne: 3, sw: 0, se: 0 }, theme::CHROME);
-    ui.painter().text(
-        tab.left_center() + egui::vec2(8.0, 0.0),
-        egui::Align2::LEFT_CENTER,
-        title,
-        egui::FontId::proportional(12.0),
-        theme::TEXT,
-    );
-}
-
-fn panel_body<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    egui::Frame::new()
-        .fill(theme::CHROME)
-        .inner_margin(egui::Margin::symmetric(10, 8))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            add(ui)
-        })
-        .inner
+    let mut x = rect.left() + 4.0;
+    for (tab, title) in tabs {
+        let galley = ui.painter().layout_no_wrap(title.to_string(), egui::FontId::proportional(12.0), theme::TEXT);
+        let w = galley.size().x + 22.0;
+        let r = egui::Rect::from_min_size(egui::pos2(x, rect.top() + 3.0), egui::vec2(w, 23.0));
+        let resp = ui.interact(r, ui.id().with(("tab", title)), egui::Sense::click());
+        let fill = if *tab == current { theme::CHROME } else if resp.hovered() { theme::HOVER.gamma_multiply(0.5) } else { theme::DOCK };
+        ui.painter().rect_filled(r, egui::CornerRadius { nw: 3, ne: 3, sw: 0, se: 0 }, fill);
+        let color = if *tab == current { theme::TEXT } else { theme::TEXT_DIM };
+        ui.painter().galley_with_override_text_color(r.left_center() + egui::vec2(11.0, -galley.size().y / 2.0), galley, color);
+        if resp.clicked() {
+            clicked = Some(*tab);
+        }
+        x += w + 2.0;
+    }
+    clicked
 }
 
 // ---------------------------------------------------------------------- menu
 
 pub fn menu_bar(app: &mut App, ui: &mut egui::Ui) {
     egui::MenuBar::new().ui(ui, |ui| {
-        ui.menu_button("File", |ui| {
-            if ui.add(egui::Button::new("New from model…").shortcut_text("Ctrl+N")).clicked() {
+        ui.menu_button(t("File"), |ui| {
+            if ui.add(egui::Button::new(t("New from model…")).shortcut_text("Ctrl+N")).clicked() {
                 ui.close();
                 app.open_model_dialog();
             }
-            if ui.add(egui::Button::new("Open project…").shortcut_text("Ctrl+O")).clicked() {
+            if ui.add(egui::Button::new(t("Open project…")).shortcut_text("Ctrl+O")).clicked() {
                 ui.close();
                 app.open_project_dialog();
             }
             ui.separator();
-            if ui.add(egui::Button::new("Save").shortcut_text("Ctrl+S")).clicked() {
+            if ui.add(egui::Button::new(t("Save")).shortcut_text("Ctrl+S")).clicked() {
                 ui.close();
                 app.save(false);
             }
-            if ui.add(egui::Button::new("Save as…").shortcut_text("Ctrl+Shift+S")).clicked() {
+            if ui.add(egui::Button::new(t("Save as…")).shortcut_text("Ctrl+Shift+S")).clicked() {
                 ui.close();
                 app.save(true);
             }
             ui.separator();
-            if ui.add(egui::Button::new("Export textures…").shortcut_text("Ctrl+Shift+E")).clicked() {
+            if ui.add(egui::Button::new(t("Export textures…")).shortcut_text("Ctrl+Shift+E")).clicked() {
                 ui.close();
-                app.export_dialog();
+                app.open_export();
             }
             ui.separator();
-            if ui.add(egui::Button::new("Quit").shortcut_text("Ctrl+Q")).clicked() {
+            if ui.add(egui::Button::new(t("Quit")).shortcut_text("Ctrl+Q")).clicked() {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
         });
-        ui.menu_button("Edit", |ui| {
+        ui.menu_button(t("Edit"), |ui| {
             let paint = &app.viewport.paint;
             let (can_undo, can_redo) = (paint.can_undo(), paint.can_redo());
-            if ui.add_enabled(can_undo, egui::Button::new("Undo").shortcut_text("Ctrl+Z")).clicked() {
-                app.undo();
+            if ui.add_enabled(can_undo, egui::Button::new(t("Undo")).shortcut_text("Ctrl+Z")).clicked() {
+                app.viewport.paint.undo();
             }
-            if ui.add_enabled(can_redo, egui::Button::new("Redo").shortcut_text("Ctrl+Shift+Z")).clicked() {
-                app.redo();
+            if ui.add_enabled(can_redo, egui::Button::new(t("Redo")).shortcut_text("Ctrl+Shift+Z")).clicked() {
+                app.viewport.paint.redo();
             }
         });
-        ui.menu_button("Layer", |ui| ui_layers::layer_menu(app, ui));
-        ui.menu_button("Bake", |ui| {
-            if ui.add(egui::Button::new(format!("{} Bake mesh maps…", icon::FIRE)).shortcut_text("Ctrl+B")).clicked() {
+        ui.menu_button(t("Layer"), |ui| ui_layers::layer_menu(app, ui));
+        ui.menu_button(t("Bake"), |ui| {
+            if ui.add(egui::Button::new(format!("{} {}", icon::FIRE, t("Bake mesh maps…"))).shortcut_text("Ctrl+B")).clicked() {
                 app.bake.open = true;
                 ui.close();
             }
         });
-        ui.menu_button("View", |ui| {
-            for (i, mode) in ShadingMode::ALL.into_iter().enumerate() {
-                ui.radio_value(&mut app.shading, mode, format!("{}   F{}", mode.label(), i + 1));
+        ui.menu_button(t("View"), |ui| {
+            shading_menu(app, ui);
+            ui.separator();
+            let mut ru = crate::i18n::is_russian();
+            if ui.checkbox(&mut ru, "Русский интерфейс / Russian UI").changed() {
+                crate::i18n::set_russian(ru);
             }
-            ui.menu_button("Mesh maps", |ui| {
-                for map in s3dp_core::BakedMap::ALL {
-                    ui.radio_value(&mut app.shading, ShadingMode::Baked(map), map.label());
-                }
-            });
         });
-        ui.menu_button("Help", |ui| {
-            ui.label(RichText::new("Shortcuts").strong());
-            ui.label(
-                "B brush · E eraser · I eyedropper\n[ ] brush size · X swap colors · D default colors\n\
+        ui.menu_button(t("Help"), |ui| {
+            ui.label(RichText::new(t("Shortcuts")).strong());
+            ui.label(t(
+                "B brush · E eraser · I eyedropper · [ ] size · X swap colors · D default colors\n\
                  Alt+LMB / MMB orbit · RMB / Shift+MMB pan · Wheel zoom · F frame\n\
-                 Ctrl+Z / Ctrl+Shift+Z undo / redo · Ctrl+J duplicate layer\n\
-                 Ctrl+Shift+N new layer · Del delete layer · F1–F9 viewport mode · Ctrl+B bake",
-            );
+                 F1–F5 viewport mode · Ctrl+Z / Ctrl+Shift+Z undo / redo\n\
+                 Ctrl+Shift+N new layer · Ctrl+G group · Ctrl+J duplicate · Del delete\n\
+                 Ctrl+B bake · Ctrl+Shift+E export · Ctrl+S save",
+            ));
         });
     });
+}
+
+pub fn shading_menu(app: &mut App, ui: &mut egui::Ui) {
+    for (i, mode) in ShadingMode::MAIN.into_iter().enumerate() {
+        ui.radio_value(&mut app.shading, mode, format!("{}   F{}", t(mode.label()), i + 1));
+    }
+    ui.menu_button(t("Channel"), |ui| {
+        for c in app.viewport.paint.doc.channels.iter() {
+            ui.radio_value(&mut app.shading, ShadingMode::Channel(c), t(c.label()));
+        }
+    });
+    ui.menu_button(t("Mesh map"), |ui| {
+        for m in BakedMap::ALL {
+            ui.radio_value(&mut app.shading, ShadingMode::Baked(m), t(m.label()));
+        }
+    });
+    ui.radio_value(&mut app.shading, ShadingMode::Mask, t("Mask of the selected layer"));
 }
 
 // ---------------------------------------------------------------------- tool bar
@@ -180,7 +180,7 @@ pub fn menu_bar(app: &mut App, ui: &mut egui::Ui) {
 pub fn toolbar(app: &mut App, ui: &mut egui::Ui) {
     ui.vertical_centered(|ui| {
         for tool in [Tool::Brush, Tool::Eraser, Tool::Eyedropper] {
-            if icon_button(ui, tool.icon(), app.tool == tool, tool.label()).clicked() {
+            if icon_button(ui, tool.icon(), app.tool == tool, &tool.label()).clicked() {
                 app.tool = tool;
             }
         }
@@ -189,7 +189,7 @@ pub fn toolbar(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
-/// Photoshop-style overlapping foreground / background swatches.
+/// Photoshop-style foreground / background swatches.
 fn color_swatches(app: &mut App, ui: &mut egui::Ui) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(36.0, 46.0), egui::Sense::hover());
     let fg = egui::Rect::from_min_size(rect.min + egui::vec2(2.0, 2.0), egui::vec2(22.0, 22.0));
@@ -197,27 +197,26 @@ fn color_swatches(app: &mut App, ui: &mut egui::Ui) {
     let bg_resp = ui.interact(bg, ui.id().with("bg_swatch"), egui::Sense::click());
     let fg_resp = ui.interact(fg, ui.id().with("fg_swatch"), egui::Sense::click());
     let painter = ui.painter();
-    for (r, c) in [(bg, app.bg_color), (fg, app.fg.base_color)] {
+    for (r, c) in [(bg, app.bg_color), (fg, app.fg_srgb())] {
         painter.rect_filled(r, 1.0, to_color32(c));
         painter.rect_stroke(r, 1.0, egui::Stroke::new(1.0, Color32::BLACK), egui::StrokeKind::Outside);
         painter.rect_stroke(r.shrink(1.0), 1.0, egui::Stroke::new(1.0, Color32::from_white_alpha(90)), egui::StrokeKind::Inside);
     }
     let swap = egui::Rect::from_min_size(rect.min + egui::vec2(25.0, 0.0), egui::vec2(12.0, 12.0));
     let reset = egui::Rect::from_min_size(rect.min + egui::vec2(0.0, 34.0), egui::vec2(12.0, 12.0));
-    let swap_resp = ui.interact(swap, ui.id().with("swap"), egui::Sense::click()).on_hover_text("Swap colors (X)");
-    let reset_resp = ui.interact(reset, ui.id().with("reset"), egui::Sense::click()).on_hover_text("Default colors (D)");
+    let swap_resp = ui.interact(swap, ui.id().with("swap"), egui::Sense::click()).on_hover_text(t("Swap colors (X)"));
+    let reset_resp = ui.interact(reset, ui.id().with("reset"), egui::Sense::click()).on_hover_text(t("Default colors (D)"));
     let small = egui::FontId::proportional(11.0);
     painter.text(swap.center(), egui::Align2::CENTER_CENTER, icon::ARROWS_LEFT_RIGHT, small.clone(), theme::TEXT_DIM);
     painter.text(reset.center(), egui::Align2::CENTER_CENTER, icon::SQUARE_HALF, small, theme::TEXT_DIM);
-    if swap_resp.clicked() {
+    if swap_resp.clicked() || bg_resp.on_hover_text(t("Background color — click to swap (X)")).clicked() {
         app.swap_colors();
     }
     if reset_resp.clicked() {
         app.reset_colors();
     }
-    fg_resp.on_hover_text("Foreground color — edit it in the Color panel");
-    if bg_resp.on_hover_text("Background color — click to swap (X)").clicked() {
-        app.swap_colors();
+    if fg_resp.on_hover_text(t("Foreground color — edit it in the Brush tab")).clicked() {
+        app.prop_tab = PropTab::Brush;
     }
 }
 
@@ -228,30 +227,34 @@ pub fn options_bar(app: &mut App, ui: &mut egui::Ui) {
         ui.label(RichText::new(app.tool.icon()).size(18.0).color(theme::TEXT));
         ui.separator();
         if app.tool == Tool::Eyedropper {
-            ui.label(RichText::new("Click the model to pick every channel of the material under the cursor").color(theme::TEXT_DIM));
+            ui.label(RichText::new(t("Click the model to pick every channel of the material under the cursor")).color(theme::TEXT_DIM));
             return;
         }
-        ui.label("Size");
+        ui.label(t("Size"));
         ui.add(egui::DragValue::new(&mut app.brush.size).range(1.0..=500.0).speed(0.5).suffix(" px"));
-        ui.label("Hardness");
+        ui.label(t("Hardness"));
         percent(ui, &mut app.brush.hardness, 0.0);
-        ui.label("Opacity");
+        ui.label(t("Opacity"));
         percent(ui, &mut app.brush.opacity, 0.0);
-        ui.label("Flow");
+        ui.label(t("Flow"));
         percent(ui, &mut app.brush.flow, 0.01);
         ui.separator();
-        ui.label("Channels");
-        let what = if app.tool == Tool::Eraser { "erased by the eraser" } else { "painted by the brush" };
-        channel_chips(ui, &mut app.brush.channels, what);
+        ui.label(t("Channels"));
+        let what = if app.tool == Tool::Eraser { t("erased by the eraser") } else { t("painted by the brush") };
+        for c in app.viewport.paint.doc.channels.iter() {
+            let on = app.brush.channels.has(c);
+            if chip(ui, c.short(), on, &format!("{} — {what}", t(c.label()))).clicked() {
+                app.brush.channels.set(c, !on);
+            }
+        }
         let paint = &app.viewport.paint;
-        if let Some(layer) = paint.active_layer() {
+        if let Some(node) = paint.active_node() {
             ui.separator();
-            let target = if layer.has_mask && paint.target == s3dp_render::EditTarget::Mask {
-                RichText::new(format!("{} Painting mask of “{}”", icon::SQUARE_HALF, layer.name)).color(theme::ACCENT)
-            } else {
-                RichText::new(format!("{} Painting “{}”", icon::STACK, layer.name)).color(theme::TEXT_DIM)
+            let text = match paint.target {
+                s3dp_render::EditTarget::MaskItem(_) => RichText::new(format!("{} {} «{}»", icon::SQUARE_HALF, t("Painting mask of"), node.name)).color(theme::ACCENT),
+                s3dp_render::EditTarget::Content => RichText::new(format!("{} {} «{}»", icon::STACK, t("Painting"), node.name)).color(theme::TEXT_DIM),
             };
-            ui.label(target);
+            ui.label(text);
         }
     });
 }
@@ -272,7 +275,7 @@ pub fn status_bar(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         if let Some(p) = app.viewport.bake_progress() {
             ui.add(egui::ProgressBar::new(p).desired_width(160.0).show_percentage());
-            ui.label(RichText::new("Baking mesh maps…").color(theme::TEXT_DIM));
+            ui.label(RichText::new(t("Baking mesh maps…")).color(theme::TEXT_DIM));
         } else {
             ui.label(RichText::new(&app.status).color(theme::TEXT_DIM));
         }
@@ -287,11 +290,14 @@ pub fn status_bar(app: &mut App, ui: &mut egui::Ui) {
                     }
                 })
                 .response
-                .on_hover_text("Texture resolution (changing it resets the layer stack)");
+                .on_hover_text(t("Texture resolution (changing it resets the layer stack)"));
             app.set_texture_size(size);
-            ui.label(RichText::new("Texture").color(theme::TEXT_FAINT));
+            ui.label(RichText::new(t("Texture")).color(theme::TEXT_FAINT));
+            if !app.viewport.paint.errors.is_empty() {
+                ui.colored_label(theme::DANGER, format!("{} {} {}", icon::WARNING, app.viewport.paint.errors.len(), t("effect error(s)")));
+            }
             if app.is_modified() {
-                ui.label(RichText::new("● unsaved").color(theme::TEXT_FAINT));
+                ui.label(RichText::new(format!("● {}", t("unsaved"))).color(theme::TEXT_FAINT));
             }
         });
     });
@@ -299,158 +305,106 @@ pub fn status_bar(app: &mut App, ui: &mut egui::Ui) {
 
 // ---------------------------------------------------------------------- dock
 
+/// Width of the right dock (fixed: widgets size themselves from it).
+pub const DOCK_WIDTH: f32 = 350.0;
+
 pub fn dock(app: &mut App, ui: &mut egui::Ui) {
-    // Content must never widen the panel: clip it to the panel rect.
-    let width = ui.max_rect().width();
+    let width = DOCK_WIDTH;
     ui.set_max_width(width);
     ui.spacing_mut().item_spacing.y = 0.0;
-    // Upper panels scroll; the Layers panel keeps at least ~280 px.
-    let upper = (ui.available_height() - 300.0).max(200.0);
-    egui::ScrollArea::vertical().id_salt("dock_upper").max_height(upper).auto_shrink([false, true]).show(ui, |ui| {
-        ui.set_width(width);
-        panel_header(ui, "Color");
-        panel_body(ui, |ui| color_panel(app, ui));
-        panel_header(ui, "Material");
-        panel_body(ui, |ui| material_panel(app, ui));
-        panel_header(ui, "Properties");
-        panel_body(ui, |ui| properties_panel(app, ui));
-    });
-    panel_header(ui, "Layers");
+    let total = ui.available_height();
+    let layers_h = (total * 0.5).clamp(220.0, total - 220.0);
+    tab_strip(ui, &[(0, t("Layers"))], 0);
     egui::Frame::new().fill(theme::CHROME).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        ui.set_min_height(ui.available_height());
+        ui.set_width(width);
+        ui.set_height(layers_h - 26.0);
         ui_layers::layers_panel(app, ui);
     });
-}
-
-fn color_panel(app: &mut App, ui: &mut egui::Ui) {
-    ui.spacing_mut().item_spacing.y = 0.0;
-    crate::color_picker::picker(ui, &mut app.picker, &mut app.fg.base_color, 130.0);
-}
-
-/// Values the brush paints into the non-color channels.
-fn material_panel(app: &mut App, ui: &mut egui::Ui) {
-    ui.spacing_mut().item_spacing.y = 5.0;
-    fit_sliders(ui, 110.0);
-    let fg = &mut app.fg;
-    let channels = &mut app.brush.channels;
-    egui::Grid::new("material").num_columns(3).spacing([6.0, 5.0]).show(ui, |ui| {
-        let mut row = |ui: &mut egui::Ui, c: Channel, value: &mut f32| {
-            let mut on = channels.has(c);
-            if ui.checkbox(&mut on, "").on_hover_text("Paint this channel").changed() {
-                channels.set(c, on);
-            }
-            ui.label(c.label());
-            ui.add(egui::Slider::new(value, 0.0..=1.0).max_decimals(2));
-            ui.end_row();
-        };
-        row(ui, Channel::Roughness, &mut fg.roughness);
-        row(ui, Channel::Metallic, &mut fg.metallic);
-        row(ui, Channel::Height, &mut fg.height);
-        let mut on = channels.has(Channel::Emissive);
-        if ui.checkbox(&mut on, "").on_hover_text("Paint this channel").changed() {
-            channels.set(Channel::Emissive, on);
-        }
-        ui.label("Emissive");
-        let mut e = to_color32(fg.emissive);
-        if egui::color_picker::color_edit_button_srgba(ui, &mut e, egui::color_picker::Alpha::Opaque).changed() {
-            fg.emissive = from_color32(e);
-        }
-        ui.end_row();
-        let mut on = channels.has(Channel::BaseColor);
-        if ui.checkbox(&mut on, "").on_hover_text("Paint this channel").changed() {
-            channels.set(Channel::BaseColor, on);
-        }
-        ui.label("Base Color");
-        ui.label(RichText::new("from the Color panel").color(theme::TEXT_FAINT));
-        ui.end_row();
-    });
-}
-
-/// Editor for a set of channel values; returns Some(checkpoint) when something changed.
-fn values_editor(ui: &mut egui::Ui, id: &str, v: &mut ChannelValues) -> Option<bool> {
-    let mut result: Option<bool> = None;
-    let mut note = |r: &egui::Response| {
-        if r.changed() {
-            let start = starts_edit(r);
-            result = Some(result.unwrap_or(false) || start);
-        }
-    };
-    fit_sliders(ui, 80.0);
-    egui::Grid::new(id).num_columns(2).spacing([6.0, 5.0]).show(ui, |ui| {
-        ui.label("Base Color");
-        let mut c = to_color32(v.base_color);
-        let r = egui::color_picker::color_edit_button_srgba(ui, &mut c, egui::color_picker::Alpha::Opaque);
-        if r.changed() {
-            v.base_color = from_color32(c);
-        }
-        note(&r);
-        ui.end_row();
-        for (label, value) in [("Roughness", &mut v.roughness), ("Metallic", &mut v.metallic), ("Height", &mut v.height)] {
-            ui.label(label);
-            let r = ui.add(egui::Slider::new(value, 0.0..=1.0).max_decimals(2));
-            note(&r);
-            ui.end_row();
-        }
-        ui.label("Emissive");
-        let mut e = to_color32(v.emissive);
-        let r = egui::color_picker::color_edit_button_srgba(ui, &mut e, egui::color_picker::Alpha::Opaque);
-        if r.changed() {
-            v.emissive = from_color32(e);
-        }
-        note(&r);
-        ui.end_row();
-    });
-    result
-}
-
-fn properties_panel(app: &mut App, ui: &mut egui::Ui) {
-    ui.spacing_mut().item_spacing.y = 5.0;
-    let index = app.viewport.paint.active;
-    let Some(layer) = app.viewport.paint.active_layer().cloned() else { return };
-    ui.horizontal(|ui| {
-        let kind = match layer.kind {
-            LayerKind::Paint => format!("{} Paint layer", icon::PAINT_BRUSH),
-            LayerKind::Fill(_) => format!("{} Fill layer", icon::PAINT_BUCKET),
-            LayerKind::Stylize(_) => format!("{} Stylize filter", icon::MAGIC_WAND),
-        };
-        ui.label(RichText::new(kind).strong());
-        ui.label(RichText::new(&layer.name).color(theme::TEXT_DIM));
-    });
-    ui.horizontal(|ui| {
-        ui.label("Affects");
-        let mut mask = layer.channels;
-        if channel_chips(ui, &mut mask, "this layer contributes to it") {
-            app.viewport.paint.edit_layer(index, true, |l| l.channels = mask);
-        }
-    });
-    match &layer.kind {
-        LayerKind::Fill(values) => {
-            let mut v = *values;
-            if let Some(checkpoint) = values_editor(ui, "fill_values", &mut v) {
-                app.viewport.paint.edit_layer(index, checkpoint, |l| l.kind = LayerKind::Fill(v));
-            }
-        }
-        LayerKind::Stylize(p) => crate::ui_effects::stylize_editor(app, ui, p),
-        LayerKind::Paint => {}
+    let tabs = [(PropTab::Properties, t("Properties")), (PropTab::Brush, t("Brush")), (PropTab::Project, t("Project"))];
+    if let Some(tab) = tab_strip(ui, &tabs, app.prop_tab) {
+        app.prop_tab = tab;
     }
-    ui.add_space(4.0);
-    egui::CollapsingHeader::new(RichText::new(format!("{} Mask effects", icon::SPARKLE)).strong())
-        .id_salt(("mask_effects", layer.id))
-        .default_open(true)
-        .show(ui, |ui| crate::ui_effects::effects_editor(app, ui));
-    ui.add_space(4.0);
-    egui::CollapsingHeader::new("Base material").id_salt("base_material").show(ui, |ui| {
-        ui.label(RichText::new("Values under all layers").color(theme::TEXT_FAINT).small());
-        let mut d = app.viewport.paint.defaults;
-        if let Some(checkpoint) = values_editor(ui, "defaults", &mut d) {
-            app.viewport.paint.set_defaults(d, checkpoint);
+    egui::Frame::new().fill(theme::CHROME).inner_margin(egui::Margin::symmetric(10, 8)).show(ui, |ui| {
+        ui.set_width(width - 20.0);
+        ui.set_min_height(ui.available_height());
+        egui::ScrollArea::vertical().id_salt("properties").auto_shrink([false, false]).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 5.0;
+            match app.prop_tab {
+                PropTab::Properties => ui_effects::properties(app, ui),
+                PropTab::Brush => brush_tab(app, ui),
+                PropTab::Project => project_tab(app, ui),
+            }
+        });
+    });
+}
+
+fn brush_tab(app: &mut App, ui: &mut egui::Ui) {
+    ui.label(RichText::new(t("Color")).strong());
+    let mut srgb = app.fg_srgb();
+    if crate::color_picker::picker(ui, &mut app.picker, &mut srgb, 120.0) {
+        app.set_fg_srgb(srgb);
+    }
+    ui.add_space(6.0);
+    ui.label(RichText::new(t("Brush material")).strong());
+    ui.label(RichText::new(t("Values the brush paints into each checked channel.")).color(theme::TEXT_FAINT).small());
+    fit_sliders(ui, 110.0);
+    let channels = app.viewport.paint.doc.channels;
+    egui::Grid::new("brush_material").num_columns(3).spacing([6.0, 5.0]).show(ui, |ui| {
+        for c in channels.iter().filter(|c| *c != ChannelId::BaseColor) {
+            let mut on = app.brush.channels.has(c);
+            if ui.checkbox(&mut on, "").on_hover_text(t("Paint this channel")).changed() {
+                app.brush.channels.set(c, on);
+            }
+            ui.label(t(c.label()));
+            let mut v = app.fg.get(c);
+            if c == ChannelId::Emissive {
+                let mut col = to_color32(v.map(s3dp_core::document::linear_to_srgb));
+                if egui::color_picker::color_edit_button_srgba(ui, &mut col, egui::color_picker::Alpha::Opaque).changed() {
+                    v = from_color32(col).map(s3dp_core::document::srgb_to_linear);
+                }
+            } else if c == ChannelId::Normal {
+                ui.label(RichText::new(t("flat")).color(theme::TEXT_FAINT));
+            } else {
+                ui.add(egui::Slider::new(&mut v[0], 0.0..=1.0).max_decimals(2));
+                v = [v[0]; 3];
+            }
+            app.fg.set(c, v);
+            ui.end_row();
         }
     });
+}
+
+fn project_tab(app: &mut App, ui: &mut egui::Ui) {
+    ui.label(RichText::new(t("Base material")).strong());
+    ui.label(RichText::new(t("Values under all layers")).color(theme::TEXT_FAINT).small());
+    let mut d = app.viewport.paint.doc.defaults.clone();
+    let mut edit = ui_effects::Edit::default();
+    ui_effects::values_editor(ui, "defaults", &mut d, app.viewport.paint.doc.channels, &mut edit);
+    if edit.changed {
+        app.viewport.paint.set_defaults(d, edit.checkpoint);
+    }
+    ui.add_space(6.0);
+    ui.label(RichText::new(t("Channels")).strong());
+    let mut channels = app.viewport.paint.doc.channels;
+    ui.horizontal_wrapped(|ui| {
+        for c in ChannelId::ALL {
+            let on = channels.has(c);
+            if chip(ui, c.short(), on, t(c.label())).clicked() {
+                channels.set(c, !on);
+            }
+        }
+    });
+    channels.set(ChannelId::BaseColor, true);
+    if channels != app.viewport.paint.doc.channels {
+        app.viewport.paint.edit_document(true, |d| d.channels = channels);
+        let rs = app.render_state.clone();
+        app.viewport.paint.channels_changed(&rs.device, &rs.queue);
+    }
     let sets: Vec<String> = app.viewport.paint.sets.iter().map(|s| s.name.clone()).collect();
     if sets.len() > 1 {
+        ui.add_space(6.0);
         ui.horizontal(|ui| {
-            ui.label("Thumbnails of");
+            ui.label(t("Thumbnails of"));
             let mut current = app.viewport.paint.thumb_set;
             egui::ComboBox::from_id_salt("thumb_set").selected_text(&sets[current.min(sets.len() - 1)]).show_ui(ui, |ui| {
                 for (i, name) in sets.iter().enumerate() {
@@ -460,6 +414,7 @@ fn properties_panel(app: &mut App, ui: &mut egui::Ui) {
             if current != app.viewport.paint.thumb_set {
                 app.viewport.paint.thumb_set = current;
                 app.viewport.paint.invalidate_thumbs();
+                app.viewport.paint.mark_all_dirty();
             }
         });
     }

@@ -1,0 +1,13 @@
+{
+  "id": "anchor_reference",
+  "name": "Anchor Reference",
+  "name_ru": "Ссылка на якорь",
+  "category": "utility",
+  "description": "Reads the output of an anchored effect from lower in the stack (e.g. dirt where scratches were painted).",
+  "description_ru": "Берёт результат эффекта-якоря ниже по стеку (например, грязь там, где нарисованы царапины).",
+  "params": [
+    {"id": "source", "label": "Anchor", "label_ru": "Якорь", "type": "anchor"},
+    {"id": "read", "label": "Read", "label_ru": "Читать", "type": "enum", "options": [["value", "Value (R)", "Значение (R)"], ["luminance", "Luminance", "Яркость"], ["alpha", "Coverage (A)", "Покрытие (A)"]], "default": 0},
+    {"id": "invert", "label": "Invert", "label_ru": "Инвертировать", "type": "bool", "default": false}
+  ]
+}

@@ -10,6 +10,7 @@ egui-wgpu.workspace = true
 egui.workspace = true
 glam.workspace = true
 bytemuck.workspace = true
+half.workspace = true
 log.workspace = true
 
 [dev-dependencies]

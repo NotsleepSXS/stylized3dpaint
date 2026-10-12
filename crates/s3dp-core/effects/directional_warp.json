@@ -1,0 +1,20 @@
+{
+  "id": "directional_warp",
+  "name": "Directional Warp",
+  "name_ru": "Направленное искажение",
+  "category": "warp",
+  "description": "Smears the input in one world direction with noise-modulated length (drips, wind, streaks).",
+  "description_ru": "Тянет вход в одном направлении с длиной по шуму (подтёки, ветер, штрихи).",
+  "neighbors": true,
+  "params": [
+    {"id": "direction", "label": "Direction", "label_ru": "Направление", "type": "direction", "default": [0, -1, 0], "group": "Warp", "group_ru": "Искажение"},
+    {"id": "intensity", "label": "Intensity", "label_ru": "Сила", "type": "float", "min": 0, "max": 0.3, "default": 0.03, "group": "Warp", "group_ru": "Искажение"},
+    {"id": "samples", "label": "Samples", "label_ru": "Шаги", "type": "int", "min": 2, "max": 48, "default": 12, "group": "Warp", "group_ru": "Искажение"},
+    {"id": "sharpness", "label": "Sharpness", "label_ru": "Резкость", "type": "float", "min": 0, "max": 1, "default": 0.7, "group": "Warp", "group_ru": "Искажение"},
+    {"id": "noise_type", "label": "Noise", "label_ru": "Шум", "type": "enum", "options": [["perlin", "Perlin", "Перлин"], ["cellular", "Cellular", "Ячеистый"], ["strokes", "Strokes", "Мазки"]], "default": 0, "group": "Noise", "group_ru": "Шум"},
+    {"id": "scale", "label": "Scale", "label_ru": "Масштаб", "type": "float", "min": 0.005, "max": 1, "default": 0.08, "logarithmic": true, "group": "Noise", "group_ru": "Шум", "tip": "Feature size relative to the object", "tip_ru": "Размер деталей относительно объекта"},
+    {"id": "octaves", "label": "Octaves", "label_ru": "Октавы", "type": "int", "min": 1, "max": 8, "default": 4, "group": "Noise", "group_ru": "Шум"},
+    {"id": "stretch", "label": "Stretch", "label_ru": "Вытянутость", "type": "float", "min": 1, "max": 12, "default": 1, "group": "Noise", "group_ru": "Шум", "tip": "Strokes noise only: stretches features along the surface (1 = off)", "tip_ru": "Только для мазков: вытягивает детали вдоль поверхности (1 = выкл.)"},
+    {"id": "seed", "label": "Seed", "label_ru": "Сид", "type": "seed", "default": 1, "group": "Noise", "group_ru": "Шум"}
+  ]
+}

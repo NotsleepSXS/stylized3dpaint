@@ -1,0 +1,21 @@
+{
+  "id": "slope_blur",
+  "name": "Slope Blur",
+  "name_ru": "Размытие по склону",
+  "category": "blur",
+  "description": "Drags the input along the flow of a noise (or an anchor's slope) over several steps: painterly smears and brush strokes.",
+  "description_ru": "Тянет вход вдоль потока шума (или склона якоря) за несколько шагов: живописные мазки.",
+  "neighbors": true,
+  "params": [
+    {"id": "intensity", "label": "Intensity", "label_ru": "Сила", "type": "float", "min": 0, "max": 0.3, "default": 0.02, "group": "Slope", "group_ru": "Склон"},
+    {"id": "samples", "label": "Samples", "label_ru": "Шаги", "type": "int", "min": 2, "max": 48, "default": 12, "group": "Slope", "group_ru": "Склон"},
+    {"id": "mode", "label": "Mode", "label_ru": "Режим", "type": "enum", "options": [["blur", "Blur", "Размытие"], ["min", "Min", "Минимум"], ["max", "Max", "Максимум"]], "default": 0, "group": "Slope", "group_ru": "Склон"},
+    {"id": "sharpness", "label": "Sharpness", "label_ru": "Резкость", "type": "float", "min": 0, "max": 1, "default": 0.5, "group": "Slope", "group_ru": "Склон", "tip": "Blur mode: 0 = soft average, 1 = bold strokes", "tip_ru": "Режим размытия: 0 — мягко, 1 — плотные мазки"},
+    {"id": "source", "label": "Slope source", "label_ru": "Источник склона", "type": "anchor", "group": "Slope", "group_ru": "Склон"},
+    {"id": "noise_type", "label": "Noise", "label_ru": "Шум", "type": "enum", "options": [["perlin", "Perlin", "Перлин"], ["cellular", "Cellular", "Ячеистый"], ["strokes", "Strokes", "Мазки"]], "default": 0, "group": "Noise", "group_ru": "Шум"},
+    {"id": "scale", "label": "Scale", "label_ru": "Масштаб", "type": "float", "min": 0.005, "max": 1, "default": 0.08, "logarithmic": true, "group": "Noise", "group_ru": "Шум", "tip": "Feature size relative to the object", "tip_ru": "Размер деталей относительно объекта"},
+    {"id": "octaves", "label": "Octaves", "label_ru": "Октавы", "type": "int", "min": 1, "max": 8, "default": 4, "group": "Noise", "group_ru": "Шум"},
+    {"id": "stretch", "label": "Stretch", "label_ru": "Вытянутость", "type": "float", "min": 1, "max": 12, "default": 1, "group": "Noise", "group_ru": "Шум", "tip": "Strokes noise only: stretches features along the surface (1 = off)", "tip_ru": "Только для мазков: вытягивает детали вдоль поверхности (1 = выкл.)"},
+    {"id": "seed", "label": "Seed", "label_ru": "Сид", "type": "seed", "default": 1, "group": "Noise", "group_ru": "Шум"}
+  ]
+}

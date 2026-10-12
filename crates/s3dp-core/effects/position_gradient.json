@@ -1,0 +1,15 @@
+{
+  "id": "position_gradient",
+  "name": "Position Gradient",
+  "name_ru": "Градиент по позиции",
+  "category": "generator",
+  "description": "Gradient along an axis or any direction across the object (light top / dark bottom, dirt rising from the ground).",
+  "description_ru": "Градиент вдоль оси или произвольного направления по объекту (светлый верх — тёмный низ, грязь от земли).",
+  "params": [
+    {"id": "axis", "label": "Direction", "label_ru": "Направление", "type": "enum", "options": [["y", "Y (up)", "Y (вверх)"], ["x", "X", "X"], ["z", "Z", "Z"], ["custom", "Custom", "Свой вектор"]], "default": 0, "group": "Gradient", "group_ru": "Градиент"},
+    {"id": "direction", "label": "Custom vector", "label_ru": "Вектор", "type": "direction", "default": [0, 1, 0], "group": "Gradient", "group_ru": "Градиент"},
+    {"id": "offset", "label": "Offset", "label_ru": "Смещение", "type": "float", "min": -1, "max": 1, "default": 0, "group": "Gradient", "group_ru": "Градиент"},
+    {"id": "contrast", "label": "Contrast", "label_ru": "Контраст", "type": "float", "min": 0, "max": 1, "default": 0, "group": "Gradient", "group_ru": "Градиент"},
+    {"id": "invert", "label": "Invert", "label_ru": "Инвертировать", "type": "bool", "default": false, "group": "Gradient", "group_ru": "Градиент"}
+  ]
+}

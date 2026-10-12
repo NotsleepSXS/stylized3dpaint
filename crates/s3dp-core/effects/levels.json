@@ -1,0 +1,16 @@
+{
+  "id": "levels",
+  "name": "Levels",
+  "name_ru": "Уровни",
+  "category": "color",
+  "description": "Remaps input black / white / gamma to output black / white.",
+  "description_ru": "Переназначает входные чёрный, белый и гамму в выходной диапазон.",
+  "params": [
+    {"id": "in_black", "label": "In Black", "label_ru": "Вход: чёрный", "type": "float", "min": 0, "max": 1, "default": 0, "group": "Input", "group_ru": "Вход"},
+    {"id": "in_white", "label": "In White", "label_ru": "Вход: белый", "type": "float", "min": 0, "max": 1, "default": 1, "group": "Input", "group_ru": "Вход"},
+    {"id": "gamma", "label": "Gamma", "label_ru": "Гамма", "type": "float", "min": 0.1, "max": 5, "default": 1, "logarithmic": true, "group": "Input", "group_ru": "Вход"},
+    {"id": "out_black", "label": "Out Black", "label_ru": "Выход: чёрный", "type": "float", "min": 0, "max": 1, "default": 0, "group": "Output", "group_ru": "Выход"},
+    {"id": "out_white", "label": "Out White", "label_ru": "Выход: белый", "type": "float", "min": 0, "max": 1, "default": 1, "group": "Output", "group_ru": "Выход"},
+    {"id": "per", "label": "Apply to", "label_ru": "Применять к", "type": "enum", "options": [["rgb", "RGB", "RGB"], ["r", "Red", "Красный"], ["g", "Green", "Зелёный"], ["b", "Blue", "Синий"]], "default": 0}
+  ]
+}

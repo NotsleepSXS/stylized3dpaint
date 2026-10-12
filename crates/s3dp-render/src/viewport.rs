@@ -1,10 +1,10 @@
 use egui_wgpu::wgpu;
 use glam::Mat4;
-use s3dp_core::{BakeSettings, BakedMap, Channel, Mesh, OrbitCamera, Vertex};
+use s3dp_core::{BakeSettings, BakedMap, ChannelId, Mesh, OrbitCamera, Vertex};
 use wgpu::util::DeviceExt;
 
 use crate::bake::{BakeJob, Baker};
-use crate::paint::{Brush, Painter, SCENE_DEPTH_FORMAT};
+use crate::paint::{Brush, Inspect, Painter, SCENE_DEPTH_FORMAT};
 
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -16,58 +16,55 @@ pub enum ShadingMode {
     #[default]
     Lit,
     Toon,
+    /// Base Color + Emissive without lighting (stylized work is judged this way, spec §6.7).
     Unlit,
     UvChecker,
     Normals,
-    Roughness,
-    Metallic,
-    Height,
-    Emissive,
+    /// One material channel.
+    Channel(ChannelId),
     /// A baked mesh map.
     Baked(BakedMap),
+    /// The mask of the active layer.
+    Mask,
 }
 
 impl ShadingMode {
-    /// Material modes (F1–F8); baked maps are listed separately.
-    pub const ALL: [ShadingMode; 9] = [
-        Self::Lit,
-        Self::Toon,
-        Self::Unlit,
-        Self::UvChecker,
-        Self::Normals,
-        Self::Roughness,
-        Self::Metallic,
-        Self::Height,
-        Self::Emissive,
-    ];
+    /// Modes on F1–F5; channels, mesh maps and the mask are listed separately.
+    pub const MAIN: [ShadingMode; 5] = [Self::Lit, Self::Toon, Self::Unlit, Self::UvChecker, Self::Normals];
 
     fn gpu_id(self) -> u32 {
         match self {
-            Self::Baked(m) => 100 + m.index() as u32,
             Self::Lit => 0,
             Self::Unlit => 1,
             Self::UvChecker => 2,
             Self::Normals => 3,
-            Self::Roughness => 4,
-            Self::Metallic => 5,
-            Self::Height => 6,
-            Self::Emissive => 7,
             Self::Toon => 8,
+            Self::Channel(c) if c.is_srgb() => 52,
+            Self::Channel(c) if c.is_color() => 51,
+            Self::Baked(m) if m.is_color() => 51,
+            Self::Channel(_) | Self::Baked(_) | Self::Mask => 50,
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Lit => "Lit",
+            Self::Lit => "Material (Lit)",
             Self::Toon => "Toon",
-            Self::Unlit => "Unlit (albedo)",
+            Self::Unlit => "Base Color (Unlit)",
             Self::UvChecker => "UV Checker",
             Self::Normals => "Normals",
-            Self::Roughness => "Roughness",
-            Self::Metallic => "Metallic",
-            Self::Height => "Height",
-            Self::Emissive => "Emissive",
+            Self::Channel(c) => c.label(),
             Self::Baked(m) => m.label(),
+            Self::Mask => "Layer mask",
+        }
+    }
+
+    fn inspect(self, active: Option<u64>) -> Inspect {
+        match self {
+            Self::Channel(c) => Inspect::Channel(c),
+            Self::Baked(m) => Inspect::Baked(m),
+            Self::Mask => active.map_or(Inspect::None, Inspect::Mask),
+            _ => Inspect::None,
         }
     }
 }
@@ -147,8 +144,8 @@ impl Viewport {
             layout: &bgl,
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() }],
         });
-        // One texture per channel, one per baked map, then the sampler.
-        let textures = (Channel::COUNT + BakedMap::COUNT) as u32;
+        // 7 material channels, baked AO, baked normal, inspect slot, then the sampler.
+        let textures = 10u32;
         let mut view_entries: Vec<wgpu::BindGroupLayoutEntry> = (0..textures)
             .map(|binding| wgpu::BindGroupLayoutEntry {
                 binding,
@@ -294,7 +291,7 @@ impl Viewport {
             usage: wgpu::BufferUsages::INDEX,
         });
         self.texture_size = texture_size;
-        self.paint.set_mesh(device, queue, mesh, &vertices, &indices, &self.view_layout, texture_size);
+        self.paint.set_mesh(device, queue, mesh, &self.view_layout, texture_size);
         let scale = self.paint.scale;
         self.baker.rasterize_geometry(device, queue, &self.paint.sets, &vertices, &indices, scale.bbox_min, scale.bbox_size);
         self.paint.baked_changed();
@@ -451,6 +448,12 @@ impl Viewport {
         };
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
 
+        let inspect = mode.inspect(self.paint.active);
+        if inspect != self.paint.inspect {
+            self.paint.inspect = inspect;
+            self.paint.rebuild_view_groups(device);
+            self.shown = None;
+        }
         if let (Some(job), Some(mesh)) = (&mut self.bake, &self.mesh) {
             job.step(device, queue, &self.baker, &self.paint.sets, &mesh.vertices, &mesh.indices, 4);
             if job.is_done() {

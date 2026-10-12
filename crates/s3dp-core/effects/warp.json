@@ -1,0 +1,18 @@
+{
+  "id": "warp",
+  "name": "Warp",
+  "name_ru": "Искажение (Warp)",
+  "category": "warp",
+  "description": "Displaces the input along a 3D noise field: torn, flowing borders. Seamless across UV seams.",
+  "description_ru": "Смещает вход по полю 3D-шума: рваные, «текучие» края. Без швов UV.",
+  "neighbors": true,
+  "params": [
+    {"id": "intensity", "label": "Intensity", "label_ru": "Сила", "type": "float", "min": 0, "max": 0.3, "default": 0.02, "group": "Warp", "group_ru": "Искажение", "tip": "Displacement relative to the object size", "tip_ru": "Смещение относительно размера объекта"},
+    {"id": "source", "label": "Warp source", "label_ru": "Источник", "type": "anchor", "group": "Warp", "group_ru": "Искажение", "tip": "Optional anchor whose gradient drives the warp instead of noise", "tip_ru": "Якорь, чей градиент задаёт искажение вместо шума"},
+    {"id": "noise_type", "label": "Noise", "label_ru": "Шум", "type": "enum", "options": [["perlin", "Perlin", "Перлин"], ["cellular", "Cellular", "Ячеистый"], ["strokes", "Strokes", "Мазки"]], "default": 0, "group": "Noise", "group_ru": "Шум"},
+    {"id": "scale", "label": "Scale", "label_ru": "Масштаб", "type": "float", "min": 0.005, "max": 1, "default": 0.08, "logarithmic": true, "group": "Noise", "group_ru": "Шум", "tip": "Feature size relative to the object", "tip_ru": "Размер деталей относительно объекта"},
+    {"id": "octaves", "label": "Octaves", "label_ru": "Октавы", "type": "int", "min": 1, "max": 8, "default": 4, "group": "Noise", "group_ru": "Шум"},
+    {"id": "stretch", "label": "Stretch", "label_ru": "Вытянутость", "type": "float", "min": 1, "max": 12, "default": 1, "group": "Noise", "group_ru": "Шум", "tip": "Strokes noise only: stretches features along the surface (1 = off)", "tip_ru": "Только для мазков: вытягивает детали вдоль поверхности (1 = выкл.)"},
+    {"id": "seed", "label": "Seed", "label_ru": "Сид", "type": "seed", "default": 1, "group": "Noise", "group_ru": "Шум"}
+  ]
+}

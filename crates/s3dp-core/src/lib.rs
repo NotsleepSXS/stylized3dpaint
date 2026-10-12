@@ -4,12 +4,16 @@ pub mod bake;
 pub mod bvh;
 pub mod camera;
 pub mod document;
-pub mod effects;
+pub mod effect_def;
+pub mod legacy;
 pub mod import;
 pub mod mesh;
 
 pub use bake::{BakeSettings, BakeStyle, BakedMap};
 pub use camera::OrbitCamera;
-pub use effects::{EffectKind, GeneratorSource, Levels, MaskBlend, MaskEffect, NoiseKind, NoiseParams, StylizeParams, WarpMode, WarpParams};
-pub use document::{BlendMode, Channel, ChannelMask, ChannelValues, Layer, LayerKind};
+pub use document::{
+    BlendMode, Blending, ChannelBlend, ChannelId, ChannelSet, ChannelValues, ColorLabel, Document, EffectInstance, Mask, MaskItem,
+    MaskItemKind, Node, NodeKind, ParamValue,
+};
+pub use effect_def::{EffectDef, ParamDef, ParamKind, registry};
 pub use mesh::{Aabb, Mesh, MeshPart, Vertex};

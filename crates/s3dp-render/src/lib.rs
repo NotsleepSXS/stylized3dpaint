@@ -1,11 +1,11 @@
-//! wgpu rendering for Stylized3DPaint: the 3D viewport and texture painting.
+//! wgpu rendering for Stylized3DPaint: viewport, layer stack, effects and baking.
 
 pub mod bake;
-pub mod effects;
+pub mod engine;
 pub mod gpu;
 pub mod paint;
 pub mod viewport;
 
 pub use egui_wgpu::wgpu;
-pub use paint::{Brush, EditTarget, GpuLayer, LayerTextures, Painter};
+pub use paint::{Brush, ChannelTextures, EditTarget, Inspect, Painter};
 pub use viewport::{ShadingMode, Viewport};

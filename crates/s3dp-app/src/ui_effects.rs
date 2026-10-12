@@ -1,386 +1,605 @@
-//! Mask effect stack editor, Stylize filter editor and smart layer presets.
+//! Properties panel for the selected layer / effect. Effect properties are generated from the
+//! effect's declarative definition (spec §2.5): grouped parameters, tooltips, reset by right
+//! click, seed randomizer, anchor picker, presets, missing mesh map warning.
 
 use egui::RichText;
 use egui_phosphor::regular as icon;
-use s3dp_core::{
-    BakedMap, BlendMode, ChannelMask, ChannelValues, EffectKind, GeneratorSource, LayerKind, Levels, MaskBlend,
-    MaskEffect, NoiseKind, NoiseParams, StylizeParams, WarpMode, WarpParams,
-};
+use s3dp_core::effect_def::{EffectDef, ParamDef, ParamKind, Target};
+use s3dp_core::{BlendMode, ChannelId, EffectInstance, MaskItem, MaskItemKind, Node, NodeKind, ParamValue, registry};
 
 use crate::app::App;
+use crate::i18n::{pick, t};
 use crate::theme;
-use crate::ui_panels::starts_edit;
+use crate::ui_layers::{effect_icon, effect_picker};
+use crate::ui_panels::{chip, fit_sliders, from_color32, starts_edit, to_color32};
 
-/// Collects whether widgets changed something and whether that starts a new undo step.
+/// Accumulates whether widgets changed something and whether that starts an undo step.
 #[derive(Default)]
-struct Edit {
-    changed: bool,
-    checkpoint: bool,
+pub struct Edit {
+    pub changed: bool,
+    pub checkpoint: bool,
 }
 
 impl Edit {
-    fn note(&mut self, r: &egui::Response) {
+    pub fn note(&mut self, r: &egui::Response) {
         if r.changed() {
             self.changed = true;
             self.checkpoint |= starts_edit(r);
         }
     }
 
-    fn structural(&mut self) {
+    pub fn structural(&mut self) {
         self.changed = true;
         self.checkpoint = true;
     }
 }
 
-fn slider(ui: &mut egui::Ui, edit: &mut Edit, label: &str, v: &mut f32, range: std::ops::RangeInclusive<f32>) {
-    ui.label(label);
-    let r = ui.add(egui::Slider::new(v, range).max_decimals(3));
-    edit.note(&r);
-    ui.end_row();
-}
-
-fn slider_u32(ui: &mut egui::Ui, edit: &mut Edit, label: &str, v: &mut u32, range: std::ops::RangeInclusive<u32>) {
-    ui.label(label);
-    let r = ui.add(egui::Slider::new(v, range));
-    edit.note(&r);
-    ui.end_row();
-}
-
-fn noise_editor(ui: &mut egui::Ui, edit: &mut Edit, n: &mut NoiseParams) {
-    ui.label("Noise");
-    let mut kind = n.kind;
-    egui::ComboBox::from_id_salt(ui.id().with("noise_kind")).selected_text(kind.label()).show_ui(ui, |ui| {
-        for k in NoiseKind::ALL {
-            ui.selectable_value(&mut kind, k, k.label());
+fn blend_combo(ui: &mut egui::Ui, id: impl std::hash::Hash + std::fmt::Debug, mode: &mut BlendMode) -> bool {
+    let before = *mode;
+    egui::ComboBox::from_id_salt(id).selected_text(t(mode.label())).width(118.0).show_ui(ui, |ui| {
+        for entry in BlendMode::MENU {
+            match entry {
+                Some(m) => {
+                    ui.selectable_value(mode, m, t(m.label()));
+                }
+                None => {
+                    ui.separator();
+                }
+            }
         }
     });
-    if kind != n.kind {
-        n.kind = kind;
-        edit.structural();
+    *mode != before
+}
+
+/// Finds an effect instance anywhere in a node.
+fn find_effect<'a>(node: &'a Node, id: u64) -> Option<&'a EffectInstance> {
+    node.own_effects().find(|e| e.id == id)
+}
+
+fn with_effect(node: &mut Node, id: u64, f: impl FnOnce(&mut EffectInstance)) {
+    if let NodeKind::Effect(e) = &mut node.kind
+        && e.id == id
+    {
+        return f(e);
     }
-    ui.end_row();
-    slider(ui, edit, "Scale", &mut n.scale, 0.005..=1.0);
-    if n.kind != NoiseKind::Cellular {
-        slider_u32(ui, edit, "Octaves", &mut n.octaves, 1..=8);
+    if let Some(e) = node.effects.iter_mut().find(|e| e.id == id) {
+        return f(e);
     }
-    if n.kind == NoiseKind::Strokes {
-        slider(ui, edit, "Stretch", &mut n.stretch, 1.0..=12.0);
+    for item in node.mask.iter_mut().flat_map(|m| m.items.iter_mut()) {
+        if let MaskItemKind::Effect(e) = &mut item.kind
+            && e.id == id
+        {
+            return f(e);
+        }
     }
-    ui.label("Seed");
-    let r = ui.add(egui::DragValue::new(&mut n.seed).range(0..=9999));
-    edit.note(&r);
-    ui.end_row();
 }
 
-fn levels_editor(ui: &mut egui::Ui, edit: &mut Edit, l: &mut Levels) {
-    slider(ui, edit, "Low", &mut l.low, 0.0..=1.0);
-    slider(ui, edit, "High", &mut l.high, 0.0..=1.0);
-    slider(ui, edit, "Gamma", &mut l.gamma, 0.1..=4.0);
-    slider_u32(ui, edit, "Bands", &mut l.steps, 0..=12);
-    ui.label("Invert");
-    let r = ui.checkbox(&mut l.invert, "");
-    edit.note(&r);
-    ui.end_row();
+/// Properties of the active node, or of its selected effect.
+pub fn properties(app: &mut App, ui: &mut egui::Ui) {
+    let Some(node) = app.viewport.paint.active_node().cloned() else {
+        ui.label(RichText::new(t("Select a layer")).color(theme::TEXT_FAINT));
+        return;
+    };
+    // Effect layers always show their effect.
+    let selected = match &node.kind {
+        NodeKind::Effect(e) => Some(e.id),
+        _ => app.viewport.paint.selected_effect.filter(|id| find_effect(&node, *id).is_some()),
+    };
+    if let Some(effect_id) = selected {
+        if !node.is_effect_layer() && ui.button(format!("{} {}", icon::ARROW_LEFT, t("Layer properties"))).clicked() {
+            app.viewport.paint.selected_effect = None;
+            return;
+        }
+        effect_editor(app, ui, &node, effect_id);
+        if node.is_effect_layer() {
+            ui.separator();
+            mask_editor(app, ui, &node);
+        }
+    } else {
+        node_editor(app, ui, &node);
+    }
 }
 
-fn effect_body(ui: &mut egui::Ui, edit: &mut Edit, kind: &mut EffectKind) {
-    crate::ui_panels::fit_sliders(ui, 100.0);
-    egui::Grid::new(ui.id().with("grid")).num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| match kind {
-        EffectKind::Generator { source, levels, blend, opacity } => {
-            match source {
-                GeneratorSource::Noise(n) => noise_editor(ui, edit, n),
-                GeneratorSource::HeightGradient { axis } => {
-                    ui.label("Axis");
-                    ui.horizontal(|ui| {
-                        for (i, name) in ["X", "Y", "Z"].iter().enumerate() {
-                            if ui.selectable_label(*axis == i as u32, *name).clicked() && *axis != i as u32 {
-                                *axis = i as u32;
-                                edit.structural();
-                            }
-                        }
-                    });
-                    ui.end_row();
-                }
-                GeneratorSource::Map(_) => {}
-            }
-            ui.label("Blend");
-            let mut b = *blend;
-            egui::ComboBox::from_id_salt(ui.id().with("mask_blend")).selected_text(b.label()).show_ui(ui, |ui| {
-                for m in MaskBlend::ALL {
-                    ui.selectable_value(&mut b, m, m.label());
-                }
-            });
-            if b != *blend {
-                *blend = b;
-                edit.structural();
-            }
-            ui.end_row();
-            slider(ui, edit, "Opacity", opacity, 0.0..=1.0);
-            levels_editor(ui, edit, levels);
-        }
-        EffectKind::Warp(w) => {
-            ui.label("Mode");
-            let mut mode = w.mode;
-            egui::ComboBox::from_id_salt(ui.id().with("warp_mode")).selected_text(mode.label()).show_ui(ui, |ui| {
-                for m in WarpMode::ALL {
-                    ui.selectable_value(&mut mode, m, m.label());
-                }
-            });
-            if mode != w.mode {
-                w.mode = mode;
-                edit.structural();
-            }
-            ui.end_row();
-            slider(ui, edit, "Intensity", &mut w.intensity, 0.0..=0.3);
-            if w.mode != WarpMode::Warp {
-                slider_u32(ui, edit, "Steps", &mut w.samples, 2..=48);
-                slider(ui, edit, "Sharpness", &mut w.sharpness, 0.0..=1.0);
-            }
-            if w.mode == WarpMode::Directional {
-                let d = glam::Vec3::from(w.direction).normalize_or(glam::Vec3::NEG_Y);
-                let mut elevation = d.y.asin().to_degrees();
-                let mut azimuth = d.x.atan2(d.z).to_degrees();
-                ui.label("Elevation (°)");
-                let r1 = ui.add(egui::Slider::new(&mut elevation, -90.0..=90.0));
-                ui.end_row();
-                ui.label("Azimuth (°)");
-                let r2 = ui.add(egui::Slider::new(&mut azimuth, -180.0..=180.0));
-                ui.end_row();
-                if r1.changed() || r2.changed() {
-                    let (e, a) = (elevation.to_radians(), azimuth.to_radians());
-                    w.direction = [e.cos() * a.sin(), e.sin(), e.cos() * a.cos()];
-                }
-                edit.note(&r1);
-                edit.note(&r2);
-            }
-            noise_editor(ui, edit, &mut w.noise);
-        }
-        EffectKind::Blur { radius } => slider(ui, edit, "Radius (texels)", radius, 0.0..=48.0),
-        EffectKind::Levels(l) => levels_editor(ui, edit, l),
-    });
-}
-
-fn add_effect_menu(ui: &mut egui::Ui) -> Option<EffectKind> {
-    let mut added = None;
-    ui.menu_button(format!("{} Add effect", icon::PLUS), |ui| {
-        ui.label(RichText::new("Generators").color(theme::TEXT_FAINT).small());
-        for m in [
-            BakedMap::Edges,
-            BakedMap::Cavity,
-            BakedMap::AmbientOcclusion,
-            BakedMap::SkyLight,
-            BakedMap::Curvature,
-            BakedMap::Thickness,
-        ] {
-            if ui.button(m.label()).clicked() {
-                added = Some(EffectKind::generator(GeneratorSource::Map(m)));
-            }
-        }
-        if ui.button("Height gradient").clicked() {
-            added = Some(EffectKind::generator(GeneratorSource::HeightGradient { axis: 1 }));
-        }
-        if ui.button("Noise").clicked() {
-            added = Some(EffectKind::generator(GeneratorSource::Noise(NoiseParams::default())));
-        }
-        ui.separator();
-        ui.label(RichText::new("Filters").color(theme::TEXT_FAINT).small());
-        for mode in WarpMode::ALL {
-            if ui.button(format!("{} {}", icon::WAVES, mode.label())).clicked() {
-                added = Some(EffectKind::Warp(WarpParams { mode, ..Default::default() }));
-            }
-        }
-        if ui.button("Blur").clicked() {
-            added = Some(EffectKind::Blur { radius: 6.0 });
-        }
-        if ui.button("Levels").clicked() {
-            added = Some(EffectKind::Levels(Levels::default()));
-        }
-        if added.is_some() {
-            ui.close();
-        }
-    });
-    added
-}
-
-/// Mask effect stack of the active layer.
-pub fn effects_editor(app: &mut App, ui: &mut egui::Ui) {
-    let index = app.viewport.paint.active;
-    let Some(layer) = app.viewport.paint.active_layer().cloned() else { return };
-    let mut effects = layer.effects.clone();
+fn node_editor(app: &mut App, ui: &mut egui::Ui, node: &Node) {
     let mut edit = Edit::default();
-    let mut remove = None;
-    let mut swap = None;
-    let count = effects.len();
-    // The add button comes first so it is always within reach.
-    let added = add_effect_menu(ui);
-    if count == 0 {
+    let mut n = node.clone();
+    let kind = match n.kind {
+        NodeKind::Paint => format!("{} {}", icon::PAINT_BRUSH, t("Paint layer")),
+        NodeKind::Fill(_) => format!("{} {}", icon::PAINT_BUCKET, t("Fill layer")),
+        NodeKind::Folder { .. } => format!("{} {}", icon::FOLDER_SIMPLE, t("Folder")),
+        NodeKind::Effect(_) => format!("{} {}", icon::STACK_PLUS, t("Effect layer")),
+    };
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(kind).strong());
+        let r = ui.add(egui::TextEdit::singleline(&mut n.name).desired_width(ui.available_width()));
+        edit.note(&r);
+    });
+    let doc_channels = app.viewport.paint.doc.channels;
+    ui.horizontal_wrapped(|ui| {
+        ui.label(t("Channels"));
+        for c in doc_channels.iter() {
+            let on = n.blending.channels.has(c);
+            if chip(ui, c.short(), on, &format!("{} — {}", t(c.label()), t("this layer contributes to it"))).clicked() {
+                n.blending.channels.set(c, !on);
+                edit.structural();
+            }
+        }
+    });
+    egui::CollapsingHeader::new(t("Blending per channel")).id_salt(("per_channel", n.id)).show(ui, |ui| {
+        for c in doc_channels.iter().filter(|c| n.blending.channels.has(*c)) {
+            ui.horizontal(|ui| {
+                ui.add_sized([62.0, 18.0], egui::Label::new(t(c.label())).truncate());
+                let mut b = n.blending.per_channel.get(&c).copied().unwrap_or(n.blending.default);
+                let mut changed = blend_combo(ui, ("pc_mode", n.id, c), &mut b.mode);
+                let mut pct = b.opacity * 100.0;
+                let r = ui.add(egui::DragValue::new(&mut pct).range(0.0..=100.0).suffix("%").max_decimals(0));
+                if r.changed() {
+                    b.opacity = pct / 100.0;
+                    changed = true;
+                    edit.checkpoint |= starts_edit(&r);
+                } else if changed {
+                    edit.checkpoint = true;
+                }
+                if changed {
+                    n.blending.per_channel.insert(c, b);
+                    edit.changed = true;
+                }
+                let has_override = n.blending.per_channel.contains_key(&c);
+                if has_override && ui.small_button(icon::ARROW_COUNTER_CLOCKWISE).on_hover_text(t("Use the layer default")).clicked() {
+                    n.blending.per_channel.remove(&c);
+                    edit.structural();
+                }
+            });
+        }
+        if ui.small_button(t("Copy blending to clipboard")).clicked() {
+            app.blend_clipboard = Some(n.blending.clone());
+        }
+        if let Some(b) = app.blend_clipboard.clone()
+            && ui.small_button(t("Paste blending")).clicked()
+        {
+            n.blending = b;
+            edit.structural();
+        }
+    });
+    if let NodeKind::Fill(values) = &mut n.kind {
+        ui.add_space(4.0);
+        ui.label(RichText::new(t("Fill values")).strong());
+        values_editor(ui, ("fill", node.id), values, doc_channels, &mut edit);
+    }
+    if let NodeKind::Folder { .. } = n.kind {
         ui.label(
-            RichText::new("Generators and filters shape this layer's mask. Bake mesh maps for Edges / Cavity / AO / Sky.")
+            RichText::new(t("Folder blend mode Passthrough composites the children directly into the stack below."))
                 .color(theme::TEXT_FAINT)
                 .small(),
         );
     }
-    for (i, effect) in effects.iter_mut().enumerate() {
-        egui::Frame::new()
-            .fill(theme::FIELD)
-            .corner_radius(3)
-            .inner_margin(egui::Margin::symmetric(6, 4))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                let id = ui.id().with((layer.id, i));
-                let state = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true);
-                state
-                    .show_header(ui, |ui| {
-                        let r = ui.checkbox(&mut effect.enabled, "");
-                        if r.changed() {
-                            edit.structural();
-                        }
-                        let glyph = match effect.kind {
-                            EffectKind::Generator { .. } => icon::SPARKLE,
-                            EffectKind::Warp(_) => icon::WAVES,
-                            EffectKind::Blur { .. } => icon::DROP,
-                            EffectKind::Levels(_) => icon::SLIDERS_HORIZONTAL,
-                        };
-                        ui.label(RichText::new(format!("{glyph} {}", effect.kind.label())).strong());
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let b = |ui: &mut egui::Ui, g: &str, tip: &str| ui.add(egui::Button::new(g).frame(false)).on_hover_text(tip);
-                            if b(ui, icon::X, "Remove").clicked() {
-                                remove = Some(i);
-                            }
-                            if i + 1 < count && b(ui, icon::CARET_DOWN, "Move down").clicked() {
-                                swap = Some((i, i + 1));
-                            }
-                            if i > 0 && b(ui, icon::CARET_UP, "Move up").clicked() {
-                                swap = Some((i - 1, i));
-                            }
-                        });
-                    })
-                    .body(|ui| effect_body(ui, &mut edit, &mut effect.kind));
+    if edit.changed {
+        app.viewport.paint.edit_node(node.id, edit.checkpoint, |dst| *dst = n.clone());
+    }
+    ui.separator();
+    content_effects(app, ui, node);
+    ui.separator();
+    mask_editor(app, ui, node);
+}
+
+/// Editor for linear channel values (colors edited in sRGB).
+pub fn values_editor(ui: &mut egui::Ui, id: impl std::hash::Hash + std::fmt::Debug, values: &mut s3dp_core::ChannelValues, channels: s3dp_core::ChannelSet, edit: &mut Edit) {
+    fit_sliders(ui, 90.0);
+    egui::Grid::new(id).num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+        for c in channels.iter() {
+            ui.label(t(c.label()));
+            let mut v = values.get(c);
+            if c.is_color() && c != ChannelId::Normal {
+                let mut col = to_color32(v.map(s3dp_core::document::linear_to_srgb));
+                let r = egui::color_picker::color_edit_button_srgba(ui, &mut col, egui::color_picker::Alpha::Opaque);
+                if r.changed() {
+                    v = from_color32(col).map(s3dp_core::document::srgb_to_linear);
+                }
+                edit.note(&r);
+            } else if c == ChannelId::Normal {
+                ui.label(RichText::new(t("flat")).color(theme::TEXT_FAINT));
+            } else {
+                let r = ui.add(egui::Slider::new(&mut v[0], 0.0..=1.0).max_decimals(3));
+                v = [v[0]; 3];
+                edit.note(&r);
+            }
+            values.set(c, v);
+            ui.end_row();
+        }
+    });
+}
+
+fn content_effects(app: &mut App, ui: &mut egui::Ui, node: &Node) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(format!("{} {}", icon::SPARKLE, t("Content effects"))).strong());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.menu_button(format!("{} {}", icon::PLUS, t("Add")), |ui| {
+                if let Some(id) = effect_picker(ui, &mut app.layers_ui.search, Target::Content) {
+                    app.viewport.paint.target = s3dp_render::EditTarget::Content;
+                    crate::ui_layers::add_effect_to_active(app, &id);
+                }
             });
-        ui.add_space(3.0);
+        });
+    });
+    if node.effects.is_empty() {
+        ui.label(RichText::new(t("Filters and generators applied to this layer's own pixels.")).color(theme::TEXT_FAINT).small());
+    }
+    let mut remove = None;
+    let mut swap = None;
+    let count = node.effects.len();
+    for (i, e) in node.effects.iter().enumerate() {
+        effect_list_row(app, ui, node, e, i, count, &mut remove, &mut swap);
     }
     if let Some(i) = remove {
-        effects.remove(i);
+        app.viewport.paint.edit_node(node.id, true, |n| {
+            n.effects.remove(i);
+        });
+    }
+    if let Some((a, b)) = swap {
+        app.viewport.paint.edit_node(node.id, true, |n| n.effects.swap(a, b));
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn effect_list_row(app: &mut App, ui: &mut egui::Ui, node: &Node, e: &EffectInstance, i: usize, count: usize, remove: &mut Option<usize>, swap: &mut Option<(usize, usize)>) {
+    let def = registry().get(&e.def);
+    ui.horizontal(|ui| {
+        let glyph = def.map_or(icon::QUESTION, |d| effect_icon(d.category));
+        let name = e.name.clone().unwrap_or_else(|| def.map_or(e.def.clone(), |d| d.display_name(crate::i18n::is_russian()).to_owned()));
+        let err = app.viewport.paint.errors.contains_key(&e.id) || def.is_none();
+        let text = RichText::new(format!("{glyph} {name}")).color(if err { theme::DANGER } else { theme::TEXT });
+        if ui.selectable_label(app.viewport.paint.selected_effect == Some(e.id), text).clicked() {
+            app.viewport.paint.selected_effect = Some(e.id);
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.small_button(icon::X).on_hover_text(t("Remove")).clicked() {
+                *remove = Some(i);
+            }
+            if i + 1 < count && ui.small_button(icon::CARET_UP).on_hover_text(t("Move up")).clicked() {
+                *swap = Some((i, i + 1));
+            }
+            if i > 0 && ui.small_button(icon::CARET_DOWN).on_hover_text(t("Move down")).clicked() {
+                *swap = Some((i - 1, i));
+            }
+        });
+    });
+    let _ = node;
+}
+
+fn mask_editor(app: &mut App, ui: &mut egui::Ui, node: &Node) {
+    let Some(mask) = node.mask.clone() else {
+        ui.label(RichText::new(format!("{} {}", icon::SQUARE_HALF, t("Mask"))).strong());
+        ui.horizontal_wrapped(|ui| {
+            if ui.button(format!("{} {}", icon::PLUS, t("White"))).on_hover_text(t("Add white mask")).clicked() {
+                app.viewport.paint.add_mask(node.id, true);
+            }
+            if ui.button(format!("{} {}", icon::PLUS, t("Black"))).on_hover_text(t("Add black mask")).clicked() {
+                app.viewport.paint.add_mask(node.id, false);
+            }
+        });
+        return;
+    };
+    let mut edit = Edit::default();
+    let mut m = mask.clone();
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(format!("{} {}", icon::SQUARE_HALF, t("Mask"))).strong());
+        let r = ui.checkbox(&mut m.enabled, t("enabled"));
+        edit.note(&r);
+        if r.changed() {
+            edit.structural();
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.menu_button(format!("{} {}", icon::PLUS, t("Add")), |ui| {
+                if ui.button(format!("{} {}", icon::PAINT_BRUSH, t("Paint"))).clicked() {
+                    let id = app.viewport.paint.new_id();
+                    m.items.push(MaskItem { id, enabled: true, opacity: 1.0, blend: BlendMode::Normal, kind: MaskItemKind::Paint });
+                    app.viewport.paint.target = s3dp_render::EditTarget::MaskItem(id);
+                    edit.structural();
+                    ui.close();
+                }
+                for (label, v) in [(t("Fill white"), 1.0), (t("Fill black"), 0.0)] {
+                    if ui.button(format!("{} {label}", icon::PAINT_BUCKET)).clicked() {
+                        let id = app.viewport.paint.new_id();
+                        m.items.push(MaskItem { id, enabled: true, opacity: 1.0, blend: BlendMode::Normal, kind: MaskItemKind::Fill(v) });
+                        edit.structural();
+                        ui.close();
+                    }
+                }
+                ui.separator();
+                if let Some(def_id) = effect_picker(ui, &mut app.layers_ui.search, Target::Mask)
+                    && let Some(inst) = app.viewport.paint.new_effect(&def_id)
+                {
+                    let id = app.viewport.paint.new_id();
+                    app.viewport.paint.selected_effect = Some(inst.id);
+                    m.items.push(MaskItem { id, enabled: true, opacity: 1.0, blend: BlendMode::Normal, kind: MaskItemKind::Effect(inst) });
+                    edit.structural();
+                }
+            });
+        });
+    });
+    let target = app.viewport.paint.target;
+    let mut remove = None;
+    let mut swap = None;
+    let count = m.items.len();
+    for (i, item) in m.items.iter_mut().enumerate().rev() {
+        ui.horizontal(|ui| {
+            let r = ui.checkbox(&mut item.enabled, "");
+            if r.changed() {
+                edit.structural();
+            }
+            match &mut item.kind {
+                MaskItemKind::Paint => {
+                    let active = target == s3dp_render::EditTarget::MaskItem(item.id);
+                    let label = RichText::new(format!("{} {}", icon::PAINT_BRUSH, t("Paint"))).color(if active { theme::ACCENT } else { theme::TEXT });
+                    if ui.selectable_label(active, label).on_hover_text(t("Click to paint this item")).clicked() {
+                        app.viewport.paint.target = s3dp_render::EditTarget::MaskItem(item.id);
+                    }
+                }
+                MaskItemKind::Fill(v) => {
+                    ui.label(format!("{} {}", icon::PAINT_BUCKET, t("Fill")));
+                    let r = ui.add(egui::DragValue::new(v).range(0.0..=1.0).speed(0.01).max_decimals(2));
+                    edit.note(&r);
+                }
+                MaskItemKind::Effect(e) => {
+                    let def = registry().get(&e.def);
+                    let glyph = def.map_or(icon::QUESTION, |d| effect_icon(d.category));
+                    let name = def.map_or(e.def.clone(), |d| d.display_name(crate::i18n::is_russian()).to_owned());
+                    let err = app.viewport.paint.errors.contains_key(&e.id) || def.is_none();
+                    let text = RichText::new(format!("{glyph} {name}")).color(if err { theme::DANGER } else { theme::TEXT });
+                    if ui.selectable_label(app.viewport.paint.selected_effect == Some(e.id), text).clicked() {
+                        app.viewport.paint.selected_effect = Some(e.id);
+                    }
+                }
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button(icon::X).on_hover_text(t("Remove")).clicked() {
+                    remove = Some(i);
+                }
+                if i + 1 < count && ui.small_button(icon::CARET_UP).clicked() {
+                    swap = Some((i, i + 1));
+                }
+                if i > 0 && ui.small_button(icon::CARET_DOWN).clicked() {
+                    swap = Some((i - 1, i));
+                }
+                if !matches!(item.kind, MaskItemKind::Effect(_)) {
+                    let mut pct = item.opacity * 100.0;
+                    let r = ui.add(egui::DragValue::new(&mut pct).range(0.0..=100.0).suffix("%").max_decimals(0));
+                    if r.changed() {
+                        item.opacity = pct / 100.0;
+                    }
+                    edit.note(&r);
+                    if blend_combo(ui, ("mask_item_blend", item.id), &mut item.blend) {
+                        edit.structural();
+                    }
+                }
+            });
+        });
+    }
+    if let Some(i) = remove {
+        m.items.remove(i);
         edit.structural();
     }
     if let Some((a, b)) = swap {
-        effects.swap(a, b);
-        edit.structural();
-    }
-    if let Some(kind) = added {
-        effects.push(MaskEffect::new(kind));
+        m.items.swap(a, b);
         edit.structural();
     }
     if edit.changed {
-        app.viewport.paint.edit_layer(index, edit.checkpoint, |l| l.effects = effects);
+        app.viewport.paint.edit_node(node.id, edit.checkpoint, |n| n.mask = Some(m.clone()));
     }
 }
 
-/// Parameters of a Stylize filter layer.
-pub fn stylize_editor(app: &mut App, ui: &mut egui::Ui, params: &StylizeParams) {
-    let index = app.viewport.paint.active;
-    let mut p = *params;
+fn effect_editor(app: &mut App, ui: &mut egui::Ui, node: &Node, effect_id: u64) {
+    let Some(e) = find_effect(node, effect_id).cloned() else { return };
+    let Some(def) = registry().get(&e.def) else {
+        ui.colored_label(theme::DANGER, format!("{} '{}'", t("Unknown effect"), e.def));
+        return;
+    };
+    let mut x = e.clone();
     let mut edit = Edit::default();
-    crate::ui_panels::fit_sliders(ui, 115.0);
-    egui::Grid::new("stylize").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
-        ui.label(RichText::new("Color").strong());
-        ui.end_row();
-        slider(ui, &mut edit, "Painterly", &mut p.painterly, 0.0..=8.0);
-        slider_u32(ui, &mut edit, "Value bands", &mut p.color_bands, 0..=8);
-        slider(ui, &mut edit, "Band strength", &mut p.band_strength, 0.0..=1.0);
-        slider(ui, &mut edit, "Saturation", &mut p.saturation, 0.0..=2.0);
-        slider(ui, &mut edit, "Warm / cool", &mut p.temperature, 0.0..=1.0);
-        slider(ui, &mut edit, "Edge highlight", &mut p.edge_highlight, 0.0..=1.0);
-        slider(ui, &mut edit, "Cavity darken", &mut p.cavity_darken, 0.0..=1.0);
-        ui.label(RichText::new("Material").strong());
-        ui.end_row();
-        slider_u32(ui, &mut edit, "Roughness bands", &mut p.roughness_bands, 0..=8);
-        slider(ui, &mut edit, "Edge polish", &mut p.edge_polish, 0.0..=1.0);
-        slider(ui, &mut edit, "Metal threshold", &mut p.metal_threshold, 0.0..=1.0);
-        slider(ui, &mut edit, "Height bevel", &mut p.height_bevel, 0.0..=1.0);
-        slider(ui, &mut edit, "Height smooth", &mut p.height_smooth, 0.0..=8.0);
+    let ru = crate::i18n::is_russian();
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(format!("{} {}", effect_icon(def.category), def.display_name(ru))).strong().size(13.5));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.selectable_label(x.anchor, icon::ANCHOR).on_hover_text(t("Anchor: other effects can read this result")).clicked() {
+                x.anchor = !x.anchor;
+                edit.structural();
+            }
+            let r = ui.checkbox(&mut x.enabled, "").on_hover_text(t("Enabled"));
+            if r.changed() {
+                edit.structural();
+            }
+        });
     });
-    if edit.changed {
-        app.viewport.paint.edit_layer(index, edit.checkpoint, |l| l.kind = LayerKind::Stylize(p));
+    if let Some(d) = pick(def.description.as_deref().unwrap_or(""), def.description_ru.as_deref()).to_owned().into() {
+        if !d.is_empty() {
+            ui.label(RichText::new(d).color(theme::TEXT_FAINT).small());
+        }
     }
-}
-
-fn generator(source: GeneratorSource, low: f32, high: f32, blend: MaskBlend) -> MaskEffect {
-    MaskEffect::new(EffectKind::Generator { source, levels: Levels { low, high, ..Default::default() }, blend, opacity: 1.0 })
-}
-
-/// Smart layers: fill layers with ready-made mask effects.
-pub fn presets_menu(app: &mut App, ui: &mut egui::Ui) {
-    let paint = &mut app.viewport.paint;
-    let fill = |c: [f32; 3]| LayerKind::Fill(ChannelValues { base_color: c, ..ChannelValues::DEFAULTS });
-    if ui.button(format!("{} Stylize filter", icon::MAGIC_WAND)).on_hover_text("Stylizes everything below it").clicked() {
-        paint.add_layer(LayerKind::Stylize(StylizeParams::default()));
-        ui.close();
+    if let Some(err) = app.viewport.paint.errors.get(&e.id) {
+        ui.colored_label(theme::DANGER, format!("{} {}", icon::WARNING, t("Effect failed:")));
+        ui.label(RichText::new(err.lines().take(4).collect::<Vec<_>>().join("\n")).small().color(theme::DANGER));
+    }
+    if !def.maps.is_empty() && !app.bake.has_baked {
+        ui.horizontal(|ui| {
+            ui.colored_label(theme::WARNING, format!("{} {}", icon::WARNING, t("Needs baked mesh maps")));
+            if ui.small_button(t("Bake…")).clicked() {
+                app.bake.open = true;
+            }
+        });
+    }
+    // Common: blend, opacity, channels, presets.
+    ui.horizontal(|ui| {
+        if blend_combo(ui, ("fx_blend", e.id), &mut x.blend) {
+            edit.structural();
+        }
+        let mut pct = x.opacity * 100.0;
+        let r = ui.add(egui::DragValue::new(&mut pct).range(0.0..=100.0).suffix("%").max_decimals(0));
+        if r.changed() {
+            x.opacity = pct / 100.0;
+        }
+        edit.note(&r);
+        if !def.presets.is_empty() {
+            egui::ComboBox::from_id_salt(("presets", e.id)).selected_text(t("Preset")).width(90.0).show_ui(ui, |ui| {
+                for p in &def.presets {
+                    if ui.button(pick(&p.name, p.name_ru.as_deref())).clicked() {
+                        def.apply_preset(&mut x, p);
+                        edit.structural();
+                    }
+                }
+            });
+        }
+    });
+    let on_content = node.effects.iter().any(|c| c.id == e.id) || node.is_effect_layer();
+    if on_content {
+        let doc_channels = app.viewport.paint.doc.channels;
+        ui.horizontal_wrapped(|ui| {
+            ui.label(t("Acts on"));
+            for c in doc_channels.iter() {
+                let on = x.channels.has(c);
+                if chip(ui, c.short(), on, t(c.label())).clicked() {
+                    x.channels.set(c, !on);
+                    edit.structural();
+                }
+            }
+        });
     }
     ui.separator();
-    if ui.button("Edge highlight").on_hover_text("Painted light on convex edges").clicked() {
-        paint.add_layer_with(fill([1.0, 0.93, 0.75]), |l| {
-            l.name = "Edge highlight".into();
-            l.channels = ChannelMask::BASE_COLOR;
-            l.opacity = 0.85;
-            l.effects = vec![
-                generator(GeneratorSource::Map(BakedMap::Edges), 0.1, 0.5, MaskBlend::Replace),
-                MaskEffect::new(EffectKind::Warp(WarpParams {
-                    intensity: 0.012,
-                    noise: NoiseParams { scale: 0.04, ..Default::default() },
-                    ..Default::default()
-                })),
-                MaskEffect::new(EffectKind::Warp(WarpParams {
-                    mode: WarpMode::SlopeBlur,
-                    intensity: 0.02,
-                    samples: 10,
-                    sharpness: 0.6,
-                    noise: NoiseParams { kind: NoiseKind::Strokes, scale: 0.06, ..Default::default() },
-                    ..Default::default()
-                })),
-            ];
-        });
-        ui.close();
+    params_editor(app, ui, def, &mut x, &mut edit);
+    if edit.changed {
+        let id = e.id;
+        app.viewport.paint.edit_node(node.id, edit.checkpoint, |n| with_effect(n, id, |dst| *dst = x.clone()));
     }
-    if ui.button("Cavity dirt").on_hover_text("Dark grime in creases").clicked() {
-        paint.add_layer_with(fill([0.18, 0.12, 0.08]), |l| {
-            l.name = "Cavity dirt".into();
-            l.channels = ChannelMask::BASE_COLOR;
-            l.blend = BlendMode::Multiply;
-            l.opacity = 0.8;
-            l.effects = vec![
-                generator(GeneratorSource::Map(BakedMap::Cavity), 0.05, 0.5, MaskBlend::Replace),
-                generator(GeneratorSource::Noise(NoiseParams { scale: 0.1, ..Default::default() }), 0.3, 0.7, MaskBlend::Multiply),
-                MaskEffect::new(EffectKind::Warp(WarpParams { intensity: 0.01, ..Default::default() })),
-            ];
-        });
-        ui.close();
+}
+
+fn params_editor(app: &App, ui: &mut egui::Ui, def: &EffectDef, e: &mut EffectInstance, edit: &mut Edit) {
+    let params = def.all_params();
+    let mut groups: Vec<(Option<String>, Option<String>)> = Vec::new();
+    for p in &params {
+        let g = (p.group.clone(), p.group_ru.clone());
+        if !groups.contains(&g) {
+            groups.push(g);
+        }
     }
-    if ui.button("Top light").on_hover_text("Hand-painted light from above").clicked() {
-        paint.add_layer_with(fill([1.0, 0.92, 0.7]), |l| {
-            l.name = "Top light".into();
-            l.channels = ChannelMask::BASE_COLOR;
-            l.blend = BlendMode::Overlay;
-            l.opacity = 0.6;
-            l.effects = vec![
-                generator(GeneratorSource::Map(BakedMap::SkyLight), 0.0, 1.0, MaskBlend::Replace),
-                generator(GeneratorSource::HeightGradient { axis: 1 }, 0.2, 1.0, MaskBlend::Multiply),
-            ];
-        });
-        ui.close();
-    }
-    if ui.button("Bottom shadow").on_hover_text("Cool gradient darkening towards the bottom").clicked() {
-        paint.add_layer_with(fill([0.3, 0.25, 0.5]), |l| {
-            l.name = "Bottom shadow".into();
-            l.channels = ChannelMask::BASE_COLOR;
-            l.blend = BlendMode::Multiply;
-            l.opacity = 0.5;
-            let mut g = generator(GeneratorSource::HeightGradient { axis: 1 }, 0.0, 0.6, MaskBlend::Replace);
-            if let EffectKind::Generator { levels, .. } = &mut g.kind {
-                levels.invert = true;
+    let eid = e.id;
+    for (group, group_ru) in groups {
+        let in_group: Vec<&ParamDef> = params.iter().filter(|p| p.group == group).collect();
+        let body = |ui: &mut egui::Ui| {
+            fit_sliders(ui, 110.0);
+            egui::Grid::new(("params", eid, group.clone())).num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+                for p in in_group {
+                    param_row(app, ui, def, e, p, edit);
+                    ui.end_row();
+                }
+            });
+        };
+        match &group {
+            Some(g) => {
+                let title = pick(g, group_ru.as_deref()).to_owned();
+                // The shared generator blocks start collapsed.
+                let open = !matches!(g.as_str(), "Global" | "Grunge");
+                egui::CollapsingHeader::new(RichText::new(title).strong()).id_salt(("group", eid, g)).default_open(open).show(ui, |ui| body(ui));
             }
-            l.effects = vec![g];
-        });
-        ui.close();
+            None => body(ui),
+        }
     }
+}
+
+fn param_row(app: &App, ui: &mut egui::Ui, def: &EffectDef, e: &mut EffectInstance, p: &ParamDef, edit: &mut Edit) {
+    let label = pick(&p.label, p.label_ru.as_deref());
+    let tip = pick(p.tip.as_deref().unwrap_or(""), p.tip_ru.as_deref());
+    let mut l = ui.label(label);
+    if !tip.is_empty() {
+        l = l.on_hover_text(tip);
+    }
+    let mut value = def.value(e, p);
+    let response = match (&p.kind, &mut value) {
+        (ParamKind::Float { min, max, logarithmic, .. }, ParamValue::Float(v)) => ui.add(egui::Slider::new(v, *min..=*max).logarithmic(*logarithmic).max_decimals(3)),
+        (ParamKind::Int { min, max, .. }, ParamValue::Int(v)) => ui.add(egui::Slider::new(v, *min..=*max)),
+        (ParamKind::Seed { .. }, ParamValue::Int(v)) => {
+            ui.horizontal(|ui| {
+                let r = ui.add(egui::DragValue::new(v).range(0..=99999));
+                if ui.small_button(icon::DICE_FIVE).on_hover_text(t("Random")).clicked() {
+                    *v = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(7, |d| d.subsec_nanos()) % 99999) as i32;
+                    edit.structural();
+                }
+                r
+            })
+            .inner
+        }
+        (ParamKind::Bool { .. }, ParamValue::Bool(v)) => ui.checkbox(v, ""),
+        (ParamKind::Color { .. }, ParamValue::Color(c)) => {
+            let mut col = to_color32(c.map(s3dp_core::document::linear_to_srgb));
+            let r = egui::color_picker::color_edit_button_srgba(ui, &mut col, egui::color_picker::Alpha::Opaque);
+            if r.changed() {
+                *c = from_color32(col).map(s3dp_core::document::srgb_to_linear);
+            }
+            r
+        }
+        (ParamKind::Enum { options, .. }, ParamValue::Enum(v)) => {
+            let before = *v;
+            let current = options.get(*v as usize).map_or("?", |o| pick(&o.1, Some(&o.2)));
+            egui::ComboBox::from_id_salt(("enum", e.id, &p.id)).selected_text(current).show_ui(ui, |ui| {
+                for (i, o) in options.iter().enumerate() {
+                    ui.selectable_value(v, i as u32, pick(&o.1, Some(&o.2)));
+                }
+            });
+            if *v != before {
+                edit.structural();
+            }
+            ui.label("")
+        }
+        (ParamKind::Direction { .. }, ParamValue::Vec3(d)) => {
+            let dir = glam::Vec3::from(*d).normalize_or(glam::Vec3::Y);
+            let mut elevation = dir.y.clamp(-1.0, 1.0).asin().to_degrees();
+            let mut azimuth = dir.x.atan2(dir.z).to_degrees();
+            let r = ui
+                .horizontal(|ui| {
+                    let a = ui.add(egui::DragValue::new(&mut elevation).range(-90.0..=90.0).suffix("°").speed(1.0)).on_hover_text(t("Elevation"));
+                    let b = ui.add(egui::DragValue::new(&mut azimuth).range(-180.0..=180.0).suffix("°").speed(1.0)).on_hover_text(t("Azimuth"));
+                    a.union(b)
+                })
+                .inner;
+            if r.changed() {
+                let (el, az) = (elevation.to_radians(), azimuth.to_radians());
+                *d = [el.cos() * az.sin(), el.sin(), el.cos() * az.cos()];
+            }
+            r
+        }
+        (ParamKind::Anchor, ParamValue::Anchor(a)) => {
+            let anchors: Vec<(u64, String)> = app
+                .viewport
+                .paint
+                .doc
+                .anchors()
+                .into_iter()
+                .filter(|(_, x)| x.id != e.id)
+                .map(|(node, x)| {
+                    let node_name = app.viewport.paint.doc.find(node).map_or(String::new(), |n| n.name.clone());
+                    let fx = registry().get(&x.def).map_or(x.def.clone(), |d| d.display_name(crate::i18n::is_russian()).to_owned());
+                    (x.id, format!("{node_name} › {fx}"))
+                })
+                .collect();
+            let before = *a;
+            let current = a.and_then(|id| anchors.iter().find(|x| x.0 == id)).map_or(t("None").to_owned(), |x| x.1.clone());
+            egui::ComboBox::from_id_salt(("anchor", e.id, &p.id)).selected_text(current).width(150.0).show_ui(ui, |ui| {
+                ui.selectable_value(a, None, t("None"));
+                for (id, name) in &anchors {
+                    ui.selectable_value(a, Some(*id), name);
+                }
+            });
+            if *a != before {
+                edit.structural();
+            }
+            ui.label("")
+        }
+        _ => ui.label(RichText::new("?").color(theme::DANGER)),
+    };
+    edit.note(&response);
+    // Right click on the label resets to the default (spec §8).
+    if l.secondary_clicked() || response.secondary_clicked() {
+        value = p.default_value();
+        edit.structural();
+    }
+    let _ = l.on_hover_text(t("Right click: reset"));
+    e.params.insert(p.id.clone(), value);
 }

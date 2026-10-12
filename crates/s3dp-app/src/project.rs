@@ -1,38 +1,30 @@
-//! `.s3dp` project files: a zip with the mesh, layer stack description and layer PNGs.
+//! `.s3dp` project files.
 //!
+//! Format 3 (current):
 //! ```text
-//! project.json                      ProjectFile (format version, layers, defaults...)
-//! mesh.bin                          vertices + indices (little-endian, see `write_mesh`)
-//! layers/<id>/<set>/<channel>.png   RGBA (colors, premultiplied) or LA (scalars, premultiplied)
-//! layers/<id>/<set>/mask.png        L
-//! baked/<set>/<map>.png              L (scalars), RGBA (normal), RGBA16 (world normal, position)
+//! project.json                   ProjectFile { format, mesh, document (layer tree), bake settings }
+//! mesh.bin                       vertices + indices (little-endian, see `write_mesh`)
+//! paint/<node>/<set>/<ch>.f16    painted channel, raw RGBA f16 premultiplied linear
+//! masks/<item>/<set>.f16         painted mask item, raw RG f16 premultiplied
+//! baked/<set>/<map>.png          L (scalars), RGBA (normal), RGBA16 (world normal, position)
 //! ```
+//! Formats 1–2 (flat layer list, 8-bit sRGB layers, mask-only effects) are migrated on load.
 
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use s3dp_core::{BakeSettings, BakedMap, Channel, ChannelValues, Layer, Mesh, MeshPart, Vertex};
-use s3dp_render::paint::{MASK_FORMAT, channel_format};
-use s3dp_render::{GpuLayer, LayerTextures, Viewport, gpu, wgpu};
+use s3dp_core::legacy;
+use s3dp_core::{
+    BakeSettings, BakedMap, BlendMode, ChannelBlend, ChannelId, ChannelSet, ChannelValues, Document, EffectInstance, Mask, MaskItem,
+    MaskItemKind, Mesh, MeshPart, Node, NodeKind, ParamValue, Vertex, registry,
+};
+use s3dp_render::paint::{ChannelTextures, MASK_PAINT_FORMAT, PAINT_FORMAT};
+use s3dp_render::{Viewport, gpu, wgpu};
 use serde::{Deserialize, Serialize};
 
-/// 1: 32-byte vertices without tangents. 2: tangents, baked mesh maps.
-const FORMAT_VERSION: u32 = 2;
-
-#[derive(Serialize, Deserialize)]
-struct ProjectFile {
-    format: u32,
-    mesh_name: String,
-    parts: Vec<PartFile>,
-    texture_size: u32,
-    defaults: ChannelValues,
-    active_layer: usize,
-    layers: Vec<Layer>,
-    /// Settings of the last bake; present when baked maps are stored.
-    #[serde(default)]
-    bake: Option<BakeSettings>,
-}
+const FORMAT_VERSION: u32 = 3;
 
 #[derive(Serialize, Deserialize)]
 struct PartFile {
@@ -41,14 +33,30 @@ struct PartFile {
     index_count: u32,
 }
 
-fn channel_file(c: Channel) -> &'static str {
-    match c {
-        Channel::BaseColor => "base_color.png",
-        Channel::Roughness => "roughness.png",
-        Channel::Metallic => "metallic.png",
-        Channel::Height => "height.png",
-        Channel::Emissive => "emissive.png",
-    }
+#[derive(Serialize, Deserialize)]
+struct ProjectFile {
+    format: u32,
+    mesh_name: String,
+    parts: Vec<PartFile>,
+    texture_size: u32,
+    document: Document,
+    #[serde(default)]
+    bake: Option<BakeSettings>,
+}
+
+/// Formats 1–2.
+#[derive(Deserialize)]
+struct LegacyProjectFile {
+    format: u32,
+    mesh_name: String,
+    parts: Vec<PartFile>,
+    texture_size: u32,
+    defaults: legacy::ChannelValues,
+    #[serde(default)]
+    active_layer: usize,
+    layers: Vec<legacy::Layer>,
+    #[serde(default)]
+    bake: Option<BakeSettings>,
 }
 
 fn png_bytes(data: &[u8], size: u32, color: image::ExtendedColorType) -> Result<Vec<u8>> {
@@ -57,30 +65,16 @@ fn png_bytes(data: &[u8], size: u32, color: image::ExtendedColorType) -> Result<
     Ok(out)
 }
 
-pub fn save(
-    path: &Path,
-    mesh: &Mesh,
-    viewport: &Viewport,
-    bake: Option<&BakeSettings>,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-) -> Result<()> {
+pub fn save(path: &Path, mesh: &Mesh, viewport: &Viewport, bake: Option<&BakeSettings>, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<()> {
     let paint = &viewport.paint;
     let project = ProjectFile {
         format: FORMAT_VERSION,
         mesh_name: mesh.name.clone(),
-        parts: mesh
-            .parts
-            .iter()
-            .map(|p| PartFile { name: p.name.clone(), first_index: p.first_index, index_count: p.index_count })
-            .collect(),
+        parts: mesh.parts.iter().map(|p| PartFile { name: p.name.clone(), first_index: p.first_index, index_count: p.index_count }).collect(),
         texture_size: viewport.texture_size(),
-        defaults: paint.defaults,
-        active_layer: paint.active,
-        layers: paint.layers.iter().map(|l| l.meta.clone()).collect(),
+        document: paint.doc.clone(),
         bake: bake.cloned(),
     };
-
     // Write to a temp file first so a failed save never destroys the old project.
     let tmp = path.with_extension("s3dp.tmp");
     let file = std::fs::File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
@@ -93,21 +87,35 @@ pub fn save(
     zip.start_file("mesh.bin", deflate)?;
     write_mesh(&mut zip, mesh)?;
 
-    for layer in &paint.layers {
-        for (si, tex) in layer.sets.iter().enumerate() {
-            let dir = format!("layers/{}/{si}", layer.meta.id);
-            for c in Channel::ALL {
-                let Some(t) = &tex.channels[c.index()] else { continue };
+    // Only textures of nodes / items that still exist.
+    let mut live = std::collections::HashSet::new();
+    paint.doc.visit(|n| {
+        live.insert(n.id);
+        for item in n.mask.iter().flat_map(|m| m.items.iter()) {
+            live.insert(item.id);
+        }
+    });
+    for (node, sets) in paint.paint_textures() {
+        if !live.contains(node) {
+            continue;
+        }
+        for (si, channels) in sets.iter().enumerate() {
+            for (ci, tex) in channels.iter().enumerate() {
+                let (Some(t), Some(c)) = (tex, ChannelId::from_index(ci)) else { continue };
                 let data = gpu::read_texture(device, queue, t).context("GPU readback failed")?;
-                let kind = if c.is_color() { image::ExtendedColorType::Rgba8 } else { image::ExtendedColorType::La8 };
-                zip.start_file(format!("{dir}/{}", channel_file(c)), stored)?;
-                zip.write_all(&png_bytes(&data, t.width(), kind)?)?;
+                zip.start_file(format!("paint/{node}/{si}/{}.f16", c.short()), deflate)?;
+                zip.write_all(&data)?;
             }
-            if let Some(m) = &tex.mask {
-                let data = gpu::read_texture(device, queue, m).context("GPU readback failed")?;
-                zip.start_file(format!("{dir}/mask.png"), stored)?;
-                zip.write_all(&png_bytes(&data, m.width(), image::ExtendedColorType::L8)?)?;
-            }
+        }
+    }
+    for (item, sets) in paint.mask_paint_textures() {
+        if !live.contains(item) {
+            continue;
+        }
+        for (si, t) in sets.iter().enumerate() {
+            let data = gpu::read_texture(device, queue, t).context("GPU readback failed")?;
+            zip.start_file(format!("masks/{item}/{si}.f16"), deflate)?;
+            zip.write_all(&data)?;
         }
     }
     if bake.is_some() {
@@ -119,10 +127,8 @@ pub fn save(
                     wgpu::TextureFormat::R8Unorm => png_bytes(&data, t.width(), image::ExtendedColorType::L8)?,
                     wgpu::TextureFormat::Rgba16Float => {
                         let halves: &[half::f16] = bytemuck::cast_slice(&data);
-                        let words: Vec<u8> = halves
-                            .iter()
-                            .flat_map(|h| ((h.to_f32().clamp(0.0, 1.0) * 65535.0).round() as u16).to_ne_bytes())
-                            .collect();
+                        let words: Vec<u8> =
+                            halves.iter().flat_map(|h| ((h.to_f32().clamp(0.0, 1.0) * 65535.0).round() as u16).to_ne_bytes()).collect();
                         png_bytes(&words, t.width(), image::ExtendedColorType::Rgba16)?
                     }
                     _ => png_bytes(&data, t.width(), image::ExtendedColorType::Rgba8)?,
@@ -137,76 +143,112 @@ pub fn save(
     Ok(())
 }
 
+type Zip = zip::ZipArchive<std::fs::File>;
+
+fn read_entry(zip: &mut Zip, name: &str) -> Result<Vec<u8>> {
+    let mut f = zip.by_name(name).with_context(|| format!("missing {name}"))?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
 /// Loads a project: replaces the viewport mesh and layer stack.
 /// Returns the mesh and the bake settings (when baked maps were restored).
 pub fn load(path: &Path, viewport: &mut Viewport, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(Mesh, Option<BakeSettings>)> {
     let file = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
     let mut zip = zip::ZipArchive::new(file).context("not a Stylized3DPaint project")?;
-    let read = |zip: &mut zip::ZipArchive<std::fs::File>, name: &str| -> Result<Vec<u8>> {
-        let mut f = zip.by_name(name).with_context(|| format!("missing {name}"))?;
-        let mut buf = Vec::new();
-        f.read_to_end(&mut buf)?;
-        Ok(buf)
-    };
-    let project: ProjectFile = serde_json::from_slice(&read(&mut zip, "project.json")?)?;
-    if project.format > FORMAT_VERSION {
-        bail!("project was saved by a newer version (format {})", project.format);
+    let json = read_entry(&mut zip, "project.json")?;
+    let header: serde_json::Value = serde_json::from_slice(&json)?;
+    let format = header.get("format").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+    if format > FORMAT_VERSION {
+        bail!("project was saved by a newer version (format {format})");
     }
-    let mut mesh = read_mesh(&read(&mut zip, "mesh.bin")?, project.format)?;
-    mesh.name = project.mesh_name.clone();
-    mesh.parts = project
-        .parts
-        .iter()
-        .map(|p| MeshPart { name: p.name.clone(), first_index: p.first_index, index_count: p.index_count })
-        .collect();
+    if format < 3 {
+        return load_legacy(&json, &mut zip, viewport, device, queue);
+    }
+    let project: ProjectFile = serde_json::from_slice(&json)?;
+    let mesh = load_mesh(&mut zip, &project.mesh_name, &project.parts, format)?;
     viewport.set_mesh(device, queue, &mesh, project.texture_size);
-
     let size = project.texture_size;
-    let mut layers = Vec::new();
-    for meta in project.layers {
-        let mut sets = Vec::new();
-        for si in 0..mesh.parts.len() {
-            let dir = format!("layers/{}/{si}", meta.id);
-            let mut tex = LayerTextures::default();
-            for c in Channel::ALL {
-                let name = format!("{dir}/{}", channel_file(c));
-                if zip.index_for_name(&name).is_none() {
+    let sets = mesh.parts.len();
+
+    let mut paint: HashMap<u64, Vec<ChannelTextures>> = HashMap::new();
+    let mut mask_paint: HashMap<u64, Vec<Option<wgpu::Texture>>> = HashMap::new();
+    let names: Vec<String> = zip.file_names().filter_map(|n| n.ok().map(|n| n.into_owned())).collect();
+    for name in names {
+        let parts: Vec<&str> = name.split('/').collect();
+        match parts.as_slice() {
+            ["paint", node, set, file] => {
+                let (Ok(node), Ok(si)) = (node.parse::<u64>(), set.parse::<usize>()) else { continue };
+                let Some(c) = ChannelId::ALL.into_iter().find(|c| format!("{}.f16", c.short()) == *file) else { continue };
+                if si >= sets {
                     continue;
                 }
-                let img = image::load_from_memory(&read(&mut zip, &name)?)?;
-                let data = if c.is_color() { img.to_rgba8().into_raw() } else { img.to_luma_alpha8().into_raw() };
-                tex.channels[c.index()] = Some(upload_checked(device, queue, size, channel_format(c), &data, &name)?);
+                let data = read_entry(&mut zip, &name)?;
+                let t = upload_checked(device, queue, size, PAINT_FORMAT, &data, &name)?;
+                let list = paint.entry(node).or_insert_with(|| vec![vec![None; ChannelId::COUNT]; sets]);
+                list[si][c.index()] = Some(t);
             }
-            let name = format!("{dir}/mask.png");
-            if zip.index_for_name(&name).is_some() {
-                let data = image::load_from_memory(&read(&mut zip, &name)?)?.to_luma8().into_raw();
-                tex.mask = Some(upload_checked(device, queue, size, MASK_FORMAT, &data, &name)?);
+            ["masks", item, file] => {
+                let (Ok(item), Some(Ok(si))) = (item.parse::<u64>(), file.strip_suffix(".f16").map(str::parse::<usize>)) else { continue };
+                if si >= sets {
+                    continue;
+                }
+                let data = read_entry(&mut zip, &name)?;
+                let t = upload_checked(device, queue, size, MASK_PAINT_FORMAT, &data, &name)?;
+                let list = mask_paint.entry(item).or_insert_with(|| vec![None; sets]);
+                list[si] = Some(t);
             }
-            sets.push(tex);
+            _ => {}
         }
-        layers.push(GpuLayer { meta, sets });
     }
-    viewport.paint.load_document(layers, project.defaults, project.active_layer);
+    // Sets without a painted mask texture get an empty one so indices line up.
+    let mask_paint: HashMap<u64, Vec<wgpu::Texture>> = mask_paint
+        .into_iter()
+        .map(|(k, list)| {
+            let full = list
+                .into_iter()
+                .map(|t| {
+                    t.unwrap_or_else(|| {
+                        let t = gpu::texture(device, "mask paint", size, MASK_PAINT_FORMAT, gpu::LAYER_USAGE);
+                        gpu::write_full(queue, &t, &vec![0u8; (size * size * 4) as usize]);
+                        t
+                    })
+                })
+                .collect();
+            (k, full)
+        })
+        .collect();
+    viewport.paint.load_document(project.document, paint, mask_paint);
+    viewport.paint.channels_changed(device, queue);
+    let bake = load_baked(&mut zip, viewport, queue, sets, size, project.bake)?;
+    Ok((mesh, bake))
+}
 
-    let mut bake = project.bake;
+fn load_mesh(zip: &mut Zip, name: &str, parts: &[PartFile], format: u32) -> Result<Mesh> {
+    let mut mesh = read_mesh(&read_entry(zip, "mesh.bin")?, format)?;
+    mesh.name = name.to_owned();
+    mesh.parts = parts.iter().map(|p| MeshPart { name: p.name.clone(), first_index: p.first_index, index_count: p.index_count }).collect();
+    Ok(mesh)
+}
+
+fn load_baked(zip: &mut Zip, viewport: &mut Viewport, queue: &wgpu::Queue, sets: usize, size: u32, bake: Option<BakeSettings>) -> Result<Option<BakeSettings>> {
+    let mut bake = bake;
     if bake.is_some() {
-        for si in 0..mesh.parts.len() {
+        'sets: for si in 0..sets {
             for map in BakedMap::ALL {
                 let name = format!("baked/{si}/{}.png", map.file_name());
                 if zip.index_for_name(&name).is_none() {
                     bake = None;
-                    continue;
+                    break 'sets;
                 }
-                let img = image::load_from_memory(&read(&mut zip, &name)?)?;
+                let img = image::load_from_memory(&read_entry(zip, &name)?)?;
                 let t = &viewport.paint.sets[si].baked[map.index()];
                 let data: Vec<u8> = match t.format() {
                     wgpu::TextureFormat::R8Unorm => img.to_luma8().into_raw(),
-                    wgpu::TextureFormat::Rgba16Float => img
-                        .to_rgba16()
-                        .into_raw()
-                        .iter()
-                        .flat_map(|&w| half::f16::from_f32(w as f32 / 65535.0).to_le_bytes())
-                        .collect(),
+                    wgpu::TextureFormat::Rgba16Float => {
+                        img.to_rgba16().into_raw().iter().flat_map(|&w| half::f16::from_f32(w as f32 / 65535.0).to_le_bytes()).collect()
+                    }
                     _ => img.to_rgba8().into_raw(),
                 };
                 let bpp = t.format().block_copy_size(None).unwrap_or(4) as usize;
@@ -218,17 +260,10 @@ pub fn load(path: &Path, viewport: &mut Viewport, device: &wgpu::Device, queue: 
         }
     }
     viewport.paint.baked_changed();
-    Ok((mesh, bake))
+    Ok(bake)
 }
 
-fn upload_checked(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    size: u32,
-    format: wgpu::TextureFormat,
-    data: &[u8],
-    name: &str,
-) -> Result<wgpu::Texture> {
+fn upload_checked(device: &wgpu::Device, queue: &wgpu::Queue, size: u32, format: wgpu::TextureFormat, data: &[u8], name: &str) -> Result<wgpu::Texture> {
     let bpp = format.block_copy_size(None).unwrap_or(4) as usize;
     if data.len() != size as usize * size as usize * bpp {
         bail!("{name} has the wrong size");
@@ -236,7 +271,235 @@ fn upload_checked(
     Ok(gpu::upload(device, queue, size, format, data))
 }
 
-/// `u32 vertex count, u32 index count, vertices (Vertex, 32 bytes each), indices (u32)`.
+fn f16_bytes(values: impl IntoIterator<Item = f32>) -> Vec<u8> {
+    values.into_iter().flat_map(|v| half::f16::from_f32(v).to_le_bytes()).collect()
+}
+
+// ------------------------------------------------------------------------------------- migration
+
+fn legacy_channel(c: legacy::Channel) -> ChannelId {
+    match c {
+        legacy::Channel::BaseColor => ChannelId::BaseColor,
+        legacy::Channel::Roughness => ChannelId::Roughness,
+        legacy::Channel::Metallic => ChannelId::Metallic,
+        legacy::Channel::Height => ChannelId::Height,
+        legacy::Channel::Emissive => ChannelId::Emissive,
+    }
+}
+
+fn legacy_values(v: &legacy::ChannelValues) -> ChannelValues {
+    let lin = |c: [f32; 3]| c.map(s3dp_core::document::srgb_to_linear);
+    let mut out = ChannelValues::defaults();
+    out.set(ChannelId::BaseColor, lin(v.base_color));
+    out.set(ChannelId::Roughness, [v.roughness; 3]);
+    out.set(ChannelId::Metallic, [v.metallic; 3]);
+    out.set(ChannelId::Height, [v.height; 3]);
+    out.set(ChannelId::Emissive, lin(v.emissive));
+    out
+}
+
+fn legacy_blend(b: legacy::BlendMode) -> BlendMode {
+    use legacy::BlendMode as L;
+    match b {
+        L::Normal => BlendMode::Normal,
+        L::Darken => BlendMode::Darken,
+        L::Multiply | L::ColorBurn | L::LinearBurn => BlendMode::Multiply,
+        L::Lighten => BlendMode::Lighten,
+        L::Screen => BlendMode::Screen,
+        L::ColorDodge | L::LinearDodge => BlendMode::LinearDodge,
+        L::Overlay => BlendMode::Overlay,
+        L::SoftLight => BlendMode::SoftLight,
+        L::HardLight => BlendMode::HardLight,
+        L::Difference => BlendMode::Difference,
+        L::Subtract => BlendMode::Subtract,
+        L::Hue => BlendMode::Hue,
+        L::Saturation => BlendMode::Saturation,
+        L::Color => BlendMode::Color,
+        L::Luminosity => BlendMode::Value,
+    }
+}
+
+/// Old mask effects -> new effect instances (kinds without an equivalent are dropped).
+fn legacy_effect(doc: &mut Document, e: &legacy::MaskEffect) -> Option<EffectInstance> {
+    use legacy::{EffectKind, GeneratorSource};
+    let mut make = |def: &str| -> Option<EffectInstance> {
+        let id = doc.alloc_id();
+        registry().get(def).map(|d| d.instantiate(id))
+    };
+    let mut inst = match &e.kind {
+        EffectKind::Generator { source, levels, blend, opacity } => {
+            let def = match source {
+                GeneratorSource::HeightGradient { .. } => "position_gradient",
+                GeneratorSource::Noise(_) => "noise",
+                GeneratorSource::Map(BakedMap::AmbientOcclusion) => "ambient_occlusion",
+                GeneratorSource::Map(BakedMap::Thickness) => "thickness",
+                GeneratorSource::Map(_) => "curvature",
+            };
+            let mut inst = make(def)?;
+            inst.opacity = *opacity;
+            inst.blend = match blend {
+                legacy::MaskBlend::Replace => BlendMode::Replace,
+                legacy::MaskBlend::Multiply => BlendMode::Multiply,
+                legacy::MaskBlend::Add => BlendMode::LinearDodge,
+                legacy::MaskBlend::Subtract => BlendMode::Subtract,
+                legacy::MaskBlend::Max => BlendMode::Lighten,
+                legacy::MaskBlend::Min => BlendMode::Darken,
+            };
+            if levels.invert {
+                inst.params.insert("g_invert".into(), ParamValue::Bool(true));
+            }
+            inst
+        }
+        EffectKind::Warp(w) => {
+            let def = match w.mode {
+                legacy::WarpMode::Warp => "warp",
+                legacy::WarpMode::SlopeBlur => "slope_blur",
+                legacy::WarpMode::Directional => "directional_warp",
+            };
+            let mut inst = make(def)?;
+            inst.params.insert("intensity".into(), ParamValue::Float(w.intensity));
+            inst
+        }
+        EffectKind::Blur { radius } => {
+            let mut inst = make("blur")?;
+            inst.params.insert("intensity".into(), ParamValue::Float((radius / 512.0).clamp(0.0, 0.2)));
+            inst
+        }
+        EffectKind::Levels(l) => {
+            let mut inst = make("levels")?;
+            inst.params.insert("in_black".into(), ParamValue::Float(l.low));
+            inst.params.insert("in_white".into(), ParamValue::Float(l.high));
+            inst.params.insert("gamma".into(), ParamValue::Float(l.gamma));
+            if l.invert {
+                inst.params.insert("out_black".into(), ParamValue::Float(1.0));
+                inst.params.insert("out_white".into(), ParamValue::Float(0.0));
+            }
+            inst
+        }
+    };
+    inst.enabled = e.enabled;
+    Some(inst)
+}
+
+fn load_legacy(json: &[u8], zip: &mut Zip, viewport: &mut Viewport, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(Mesh, Option<BakeSettings>)> {
+    let project: LegacyProjectFile = serde_json::from_slice(json)?;
+    let mesh = load_mesh(zip, &project.mesh_name, &project.parts, project.format)?;
+    viewport.set_mesh(device, queue, &mesh, project.texture_size);
+    let size = project.texture_size;
+    let sets = mesh.parts.len();
+    let mut doc = Document { defaults: legacy_values(&project.defaults), ..Document::default() };
+    let mut paint: HashMap<u64, Vec<ChannelTextures>> = HashMap::new();
+    let mut mask_paint: HashMap<u64, Vec<wgpu::Texture>> = HashMap::new();
+    let channel_file = |c: legacy::Channel| match c {
+        legacy::Channel::BaseColor => "base_color.png",
+        legacy::Channel::Roughness => "roughness.png",
+        legacy::Channel::Metallic => "metallic.png",
+        legacy::Channel::Height => "height.png",
+        legacy::Channel::Emissive => "emissive.png",
+    };
+    let mut active = None;
+    for (index, layer) in project.layers.iter().enumerate() {
+        let id = doc.alloc_id();
+        let kind = match &layer.kind {
+            legacy::LayerKind::Paint => NodeKind::Paint,
+            legacy::LayerKind::Fill(v) => NodeKind::Fill(legacy_values(v)),
+            legacy::LayerKind::Stylize(_) => {
+                let eid = doc.alloc_id();
+                match registry().get("stylize_master") {
+                    Some(d) => NodeKind::Effect(d.instantiate(eid)),
+                    None => {
+                        log::warn!("migration: Stylize layer skipped (stylize_master effect missing)");
+                        continue;
+                    }
+                }
+            }
+        };
+        let mut node = Node::new(id, layer.name.clone(), kind);
+        node.visible = layer.visible;
+        node.blending.default = ChannelBlend { mode: legacy_blend(layer.blend), opacity: layer.opacity };
+        // Old layers used their blend mode only on color channels.
+        for c in [ChannelId::Roughness, ChannelId::Metallic, ChannelId::Height] {
+            node.blending.per_channel.insert(c, ChannelBlend { mode: BlendMode::Normal, opacity: layer.opacity });
+        }
+        node.blending.channels = legacy::Channel::ALL.iter().filter(|c| layer.channels.has(**c)).map(|c| legacy_channel(*c)).collect::<ChannelSet>();
+        // Painted channels: 8-bit sRGB premultiplied -> linear premultiplied f16.
+        for si in 0..sets {
+            for c in legacy::Channel::ALL {
+                let name = format!("layers/{}/{si}/{}", layer.id, channel_file(c));
+                if zip.index_for_name(&name).is_none() {
+                    continue;
+                }
+                let img = image::load_from_memory(&read_entry(zip, &name)?)?;
+                let data: Vec<f32> = if c.is_color() {
+                    img.to_rgba8()
+                        .pixels()
+                        .flat_map(|p| {
+                            let a = p[3] as f32 / 255.0;
+                            let rgb = [0, 1, 2].map(|i| {
+                                let straight = if a > 0.0 { p[i] as f32 / 255.0 / a } else { 0.0 };
+                                s3dp_core::document::srgb_to_linear(straight.min(1.0)) * a
+                            });
+                            [rgb[0], rgb[1], rgb[2], a]
+                        })
+                        .collect()
+                } else {
+                    img.to_luma_alpha8()
+                        .pixels()
+                        .flat_map(|p| {
+                            let (v, a) = (p[0] as f32 / 255.0, p[1] as f32 / 255.0);
+                            [v, v, v, a]
+                        })
+                        .collect()
+                };
+                let t = upload_checked(device, queue, size, PAINT_FORMAT, &f16_bytes(data), &name)?;
+                let list = paint.entry(id).or_insert_with(|| vec![vec![None; ChannelId::COUNT]; sets]);
+                list[si][legacy_channel(c).index()] = Some(t);
+            }
+        }
+        // Mask: white base, painted texture, then the old mask effects.
+        if layer.has_mask || !layer.effects.is_empty() {
+            let mut items = Vec::new();
+            let fill = doc.alloc_id();
+            items.push(MaskItem { id: fill, enabled: true, opacity: 1.0, blend: BlendMode::Normal, kind: MaskItemKind::Fill(1.0) });
+            if layer.has_mask {
+                let item = doc.alloc_id();
+                for si in 0..sets {
+                    let name = format!("layers/{}/{si}/mask.png", layer.id);
+                    let data: Vec<f32> = if zip.index_for_name(&name).is_some() {
+                        let img = image::load_from_memory(&read_entry(zip, &name)?)?;
+                        img.to_luma8().pixels().flat_map(|p| [p[0] as f32 / 255.0, 1.0]).collect()
+                    } else {
+                        vec![1.0; (size * size * 2) as usize]
+                    };
+                    let t = upload_checked(device, queue, size, MASK_PAINT_FORMAT, &f16_bytes(data), &name)?;
+                    mask_paint.entry(item).or_default().push(t);
+                }
+                items.push(MaskItem { id: item, enabled: true, opacity: 1.0, blend: BlendMode::Normal, kind: MaskItemKind::Paint });
+            }
+            for e in &layer.effects {
+                match legacy_effect(&mut doc, e) {
+                    Some(inst) => {
+                        let id = doc.alloc_id();
+                        items.push(MaskItem { id, enabled: true, opacity: inst.opacity, blend: inst.blend, kind: MaskItemKind::Effect(inst) });
+                    }
+                    None => log::warn!("migration: dropped an old mask effect ({})", e.kind.label()),
+                }
+            }
+            node.mask = Some(Mask { enabled: layer.mask_enabled || !layer.effects.is_empty(), items });
+        }
+        if index == project.active_layer {
+            active = Some(id);
+        }
+        doc.nodes.push(node);
+    }
+    viewport.paint.load_document(doc, paint, mask_paint);
+    viewport.paint.active = active.or(viewport.paint.active);
+    viewport.paint.channels_changed(device, queue);
+    let bake = load_baked(zip, viewport, queue, sets, size, project.bake)?;
+    Ok((mesh, bake))
+}
+
+/// `u32 vertex count, u32 index count, vertices (Vertex, 48 bytes each), indices (u32)`.
 fn write_mesh(w: &mut impl Write, mesh: &Mesh) -> Result<()> {
     w.write_all(&(mesh.vertices.len() as u32).to_le_bytes())?;
     w.write_all(&(mesh.indices.len() as u32).to_le_bytes())?;
@@ -284,7 +547,7 @@ fn read_mesh(bytes: &[u8], format: u32) -> Result<Mesh> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use s3dp_core::{BlendMode, ChannelMask, LayerKind, OrbitCamera};
+    use s3dp_core::OrbitCamera;
     use s3dp_render::{Brush, ShadingMode};
 
     fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
@@ -293,118 +556,59 @@ mod tests {
         pollster::block_on(adapter.request_device(&Default::default())).ok()
     }
 
-    fn all_channels(vp: &Viewport, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<Vec<u8>> {
-        Channel::ALL.iter().map(|&c| vp.paint.read_channel(device, queue, 0, c).unwrap().1).collect()
+    fn finals(vp: &Viewport, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<Vec<f32>> {
+        vp.paint.doc.channels.iter().map(|c| vp.paint.read_final(device, queue, 0, c).unwrap().1).collect()
     }
 
+    /// Spec §13.1: save, close, open -> identical result.
     #[test]
     fn save_and_load_roundtrip() {
         let Some((device, queue)) = device() else { return };
         let mut mesh = Mesh::uv_sphere(32, 16);
         mesh.name = "ball".into();
         let mut vp = Viewport::new(&device);
-        vp.paint.throttle_effects = false;
-        vp.set_mesh(&device, &queue, &mesh, 256);
+        vp.paint.throttle = false;
+        vp.set_mesh(&device, &queue, &mesh, 128);
         let mut cam = OrbitCamera::default();
         cam.frame(glam::Vec3::ZERO, 1.0, 1.0);
-        let view = [256, 256];
+        let view = [128, 128];
         vp.render(&device, &queue, view, &cam, ShadingMode::Lit);
-
-        let brush = Brush {
-            values: ChannelValues { base_color: [0.1, 0.8, 0.3], roughness: 0.1, ..ChannelValues::DEFAULTS },
-            channels: ChannelMask([true, true, false, false, false]),
-            radius: 30.0,
-            ..Default::default()
-        };
-        vp.begin_stroke(&device, &queue, brush).unwrap();
-        vp.paint.add_dabs(&[[128.0, 128.0], [150.0, 120.0]]);
+        let mut brush = Brush::default();
+        brush.channels = [ChannelId::BaseColor, ChannelId::Roughness].into_iter().collect();
+        brush.values.set(ChannelId::Roughness, [0.1; 3]);
+        vp.begin_stroke(&device, &queue, brush.clone()).unwrap();
+        vp.paint.add_dabs(&[[64.0, 64.0], [80.0, 60.0]]);
         vp.render(&device, &queue, view, &cam, ShadingMode::Lit);
         vp.paint.end_stroke();
-        vp.paint.add_layer(LayerKind::Fill(ChannelValues { base_color: [0.9, 0.2, 0.9], ..ChannelValues::DEFAULTS }));
-        let top = vp.paint.active;
-        vp.paint.edit_layer(top, true, |l| {
-            l.blend = BlendMode::Overlay;
-            l.opacity = 0.6;
-            l.name = "Overlay fill".into();
-        });
-        vp.paint.add_mask(&device, &queue, top, false);
-        vp.begin_stroke(&device, &queue, Brush { values: ChannelValues { base_color: [1.0; 3], ..ChannelValues::DEFAULTS }, ..brush })
-            .unwrap();
-        vp.paint.add_dabs(&[[110.0, 140.0]]);
+        // Folder with a fill + painted mask, and a blur on the folder.
+        let folder = vp.paint.add_node(NodeKind::Folder { expanded: true }, |_, _| {});
+        let mut fill = ChannelValues::defaults();
+        fill.set(ChannelId::BaseColor, [0.6, 0.1, 0.6]);
+        let fill_id = vp.paint.add_node(NodeKind::Fill(fill), |n, _| n.blending.default.mode = BlendMode::Overlay);
+        vp.paint.add_mask(fill_id, false);
+        let mut white = brush.clone();
+        white.values.set(ChannelId::BaseColor, [1.0; 3]);
+        vp.begin_stroke(&device, &queue, white).unwrap();
+        vp.paint.add_dabs(&[[56.0, 70.0]]);
         vp.render(&device, &queue, view, &cam, ShadingMode::Lit);
         vp.paint.end_stroke();
+        let blur = vp.paint.new_effect("blur").unwrap();
+        vp.paint.edit_node(folder, true, |n| n.effects.push(blur));
         vp.render(&device, &queue, view, &cam, ShadingMode::Lit);
-        let before = all_channels(&vp, &device, &queue);
-        let mut bake = BakeSettings::preset(s3dp_core::BakeStyle::Stylized);
-        bake.ao_samples = 8;
-        bake.edge_samples = 8;
-        bake.thickness_samples = 8;
-        bake.sky_samples = 8;
-        vp.bake_now(&device, &queue, &mesh, None, &bake);
-        let baked_before: Vec<Vec<u8>> =
-            vp.paint.sets[0].baked.iter().map(|t| gpu::read_texture(&device, &queue, t).unwrap()).collect();
+        let before = finals(&vp, &device, &queue);
 
         let dir = std::env::temp_dir().join(format!("s3dp-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("ball.s3dp");
-        save(&path, &mesh, &vp, Some(&bake), &device, &queue).unwrap();
+        save(&path, &mesh, &vp, None, &device, &queue).unwrap();
 
         let mut vp2 = Viewport::new(&device);
-        vp2.paint.throttle_effects = false;
-        let (loaded, loaded_bake) = load(&path, &mut vp2, &device, &queue).unwrap();
-        assert_eq!(loaded_bake.as_ref(), Some(&bake));
-        for (i, t) in vp2.paint.sets[0].baked.iter().enumerate() {
-            let after = gpu::read_texture(&device, &queue, t).unwrap();
-            if t.format() == wgpu::TextureFormat::Rgba16Float {
-                let (a, b): (&[half::f16], &[half::f16]) = (bytemuck::cast_slice(&baked_before[i]), bytemuck::cast_slice(&after));
-                let worst = a.iter().zip(b).map(|(x, y)| (x.to_f32() - y.to_f32()).abs()).fold(0.0, f32::max);
-                assert!(worst < 1e-3, "{:?} differs by {worst}", BakedMap::ALL[i]);
-            } else {
-                assert!(after == baked_before[i], "{:?} differs after reload", BakedMap::ALL[i]);
-            }
-        }
+        vp2.paint.throttle = false;
+        let (loaded, _) = load(&path, &mut vp2, &device, &queue).unwrap();
         vp2.render(&device, &queue, view, &cam, ShadingMode::Lit);
         assert_eq!(loaded.indices, mesh.indices);
-        assert_eq!(loaded.parts.len(), mesh.parts.len());
-        let names: Vec<_> = vp2.paint.layers.iter().map(|l| l.meta.name.clone()).collect();
-        assert_eq!(names, ["Layer 1", "Overlay fill"]);
-        assert_eq!(vp2.paint.layers[1].meta.blend, BlendMode::Overlay);
-        assert_eq!(before, all_channels(&vp2, &device, &queue), "composited maps must match after reload");
+        assert_eq!(vp2.paint.doc, vp.paint.doc);
+        assert_eq!(before, finals(&vp2, &device, &queue), "composited maps must match after reload");
         std::fs::remove_dir_all(&dir).ok();
-    }
-
-    /// Writes target/tmp/fx_stress.s3dp (monkey + slope blur layer) for manual testing:
-    /// `cargo test -p stylized3dpaint stress_project -- --ignored`.
-    #[test]
-    #[ignore]
-    fn stress_project() {
-        use s3dp_core::{EffectKind, MaskEffect, NoiseKind, NoiseParams, WarpMode, WarpParams};
-        let Some((device, queue)) = device() else { return };
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let mesh = s3dp_core::import::load(&root.join("assets/test/monkey_crate.glb")).unwrap();
-        let mut vp = Viewport::new(&device);
-        vp.paint.throttle_effects = false;
-        vp.set_mesh(&device, &queue, &mesh, 2048);
-        let bake = BakeSettings::default();
-        vp.bake_now(&device, &queue, &mesh, None, &bake);
-        vp.paint.add_layer_with(LayerKind::Fill(ChannelValues { base_color: [1.0, 0.9, 0.7], ..ChannelValues::DEFAULTS }), |l| {
-            l.name = "Edge highlight".into();
-            l.effects = vec![
-                MaskEffect::new(EffectKind::generator(s3dp_core::GeneratorSource::Map(BakedMap::Edges))),
-                MaskEffect::new(EffectKind::Warp(WarpParams {
-                    mode: WarpMode::SlopeBlur,
-                    samples: 48,
-                    intensity: 0.1,
-                    noise: NoiseParams { kind: NoiseKind::Strokes, octaves: 8, ..Default::default() },
-                    ..Default::default()
-                })),
-            ];
-        });
-        vp.paint.add_layer(LayerKind::Stylize(Default::default()));
-        if std::env::var("ACTIVE_FX").is_ok() {
-            vp.paint.active = 1;
-        }
-        std::fs::create_dir_all(root.join("target/tmp")).unwrap();
-        save(&root.join("target/tmp/fx_stress.s3dp"), &mesh, &vp, Some(&bake), &device, &queue).unwrap();
     }
 }

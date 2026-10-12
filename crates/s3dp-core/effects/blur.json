@@ -1,0 +1,12 @@
+{
+  "id": "blur",
+  "name": "Blur",
+  "name_ru": "Размытие",
+  "category": "blur",
+  "description": "Gaussian blur measured in object units: looks the same at any texture resolution and does not bleed across UV seams.",
+  "description_ru": "Гауссово размытие в долях объекта: одинаково на любом разрешении и не протекает через швы UV.",
+  "neighbors": true,
+  "params": [
+    {"id": "intensity", "label": "Intensity", "label_ru": "Сила", "type": "float", "min": 0, "max": 0.2, "default": 0.02, "tip": "Radius as a fraction of the object size", "tip_ru": "Радиус в долях размера объекта"}
+  ]
+}

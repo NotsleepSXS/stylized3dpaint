@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 s3dp-core.workspace = true
 s3dp-render.workspace = true
+s3dp-export.workspace = true
 eframe.workspace = true
 egui.workspace = true
 egui-wgpu.workspace = true
