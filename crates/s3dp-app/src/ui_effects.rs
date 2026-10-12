@@ -397,21 +397,15 @@ fn effect_preview(app: &mut App, ui: &mut egui::Ui, node: &Node, effect_id: u64)
     let mut uv: bool = ui.data_mut(|d| *d.get_persisted_mut_or(uv_id, false));
     egui::CollapsingHeader::new(RichText::new(format!("{} {}", icon::EYE, t("Preview"))).strong()).id_salt("effect_preview").default_open(true).show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut uv, false, "3D").on_hover_text(t("The effect alone on a sample shape"));
-            ui.selectable_value(&mut uv, true, "UV").on_hover_text(t("Flat texture of your model (UV layout of the first texture set)"));
-            if uv {
-                ui.label(RichText::new(if on_mask { t("Layer mask") } else { t("Material") }).small().color(theme::TEXT_FAINT));
-            }
+            ui.selectable_value(&mut uv, false, "3D").on_hover_text(t("This effect with what is below it (effects above are left out), on a sample shape"));
+            ui.selectable_value(&mut uv, true, "UV").on_hover_text(t("The same on the sample's flat texture"));
+            ui.label(RichText::new(if on_mask { t("Mask up to this effect") } else { t("Layer up to this effect") }).small().color(theme::TEXT_FAINT));
         });
-        if uv {
-            let what = s3dp_render::Preview { mask_of: on_mask.then_some(node.id), uv, set: 0, shading: None };
-            app.preview_ui(ui, what);
-        } else if let Some(e) = find_effect(node, effect_id).cloned()
-            && let Some(def) = registry().get(&e.def)
+        // The effect with what is below it in its stack (not the effects above), on a sample shape.
+        if let Some(e) = find_effect(node, effect_id).cloned()
+            && let Some(stack) = crate::ui_preview::PreviewStack::of(node, effect_id, &e)
         {
-            // How the effect works on a neutral sample shape.
-            let layer = matches!(&node.kind, NodeKind::Effect(x) if x.id == effect_id);
-            crate::ui_preview::show(app, ui, def, &e, on_mask, layer);
+            crate::ui_preview::show(app, ui, &stack, uv);
         }
     });
     ui.data_mut(|d| d.insert_persisted(uv_id, uv));

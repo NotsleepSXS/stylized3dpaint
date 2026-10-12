@@ -288,5 +288,9 @@
  "Model only": "Только модель",
  "Model and its flat texture side by side": "Модель и её плоская текстура рядом",
  "Model only (U)": "Только модель (U)",
- "Model and its flat texture side by side (U)": "Модель и её плоская текстура рядом (U)"
+ "Model and its flat texture side by side (U)": "Модель и её плоская текстура рядом (U)",
+ "This effect with what is below it (effects above are left out), on a sample shape": "Этот эффект вместе с тем, что под ним (эффекты выше не учитываются), на образце",
+ "The same on the sample's flat texture": "То же на плоской текстуре образца",
+ "Mask up to this effect": "Маска до этого эффекта",
+ "Layer up to this effect": "Слой до этого эффекта"
 }
