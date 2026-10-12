@@ -23,6 +23,14 @@ pub fn starts_edit(response: &egui::Response) -> bool {
     response.drag_started() || !response.dragged()
 }
 
+/// Sets the slider width so a two-column grid row (label + slider + value box) fits the
+/// panel: `label` is the width reserved for the widest label in the grid.
+pub fn fit_sliders(ui: &mut egui::Ui, label: f32) {
+    let value_box = 56.0;
+    let spacing = 24.0;
+    ui.spacing_mut().slider_width = (ui.available_width() - label - value_box - spacing).max(40.0);
+}
+
 /// Square icon button; highlighted when `selected`.
 pub fn icon_button(ui: &mut egui::Ui, glyph: &str, selected: bool, tooltip: &str) -> egui::Response {
     let size = egui::vec2(32.0, 30.0);
@@ -323,7 +331,7 @@ fn color_panel(app: &mut App, ui: &mut egui::Ui) {
 /// Values the brush paints into the non-color channels.
 fn material_panel(app: &mut App, ui: &mut egui::Ui) {
     ui.spacing_mut().item_spacing.y = 5.0;
-    ui.spacing_mut().slider_width = (ui.max_rect().width() - 150.0).max(60.0);
+    fit_sliders(ui, 110.0);
     let fg = &mut app.fg;
     let channels = &mut app.brush.channels;
     egui::Grid::new("material").num_columns(3).spacing([6.0, 5.0]).show(ui, |ui| {
@@ -368,7 +376,7 @@ fn values_editor(ui: &mut egui::Ui, id: &str, v: &mut ChannelValues) -> Option<b
             result = Some(result.unwrap_or(false) || start);
         }
     };
-    ui.spacing_mut().slider_width = (ui.max_rect().width() - 150.0).max(60.0);
+    fit_sliders(ui, 80.0);
     egui::Grid::new(id).num_columns(2).spacing([6.0, 5.0]).show(ui, |ui| {
         ui.label("Base Color");
         let mut c = to_color32(v.base_color);

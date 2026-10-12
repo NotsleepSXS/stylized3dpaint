@@ -725,10 +725,11 @@ impl eframe::App for App {
             .resizable(false)
             .frame(egui::Frame::new().fill(theme::CHROME).inner_margin(egui::Margin::symmetric(4, 6)))
             .show(ui, |ui| ui_panels::toolbar(self, ui));
+        // Fixed width: dock widgets size themselves from the panel width, so a resizable
+        // panel would grow in a feedback loop whenever a row overflows.
         egui::Panel::right("dock")
-            .default_size(310.0)
-            .size_range(260.0..=520.0)
-            .resizable(true)
+            .exact_size(330.0)
+            .resizable(false)
             .frame(egui::Frame::new().fill(theme::DOCK).inner_margin(egui::Margin::same(0)))
             .show(ui, |ui| ui_panels::dock(self, ui));
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| self.viewport_ui(ui));

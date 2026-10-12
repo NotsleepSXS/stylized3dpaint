@@ -400,6 +400,10 @@ mod tests {
                 })),
             ];
         });
+        vp.paint.add_layer(LayerKind::Stylize(Default::default()));
+        if std::env::var("ACTIVE_FX").is_ok() {
+            vp.paint.active = 1;
+        }
         std::fs::create_dir_all(root.join("target/tmp")).unwrap();
         save(&root.join("target/tmp/fx_stress.s3dp"), &mesh, &vp, Some(&bake), &device, &queue).unwrap();
     }

@@ -84,7 +84,7 @@ fn levels_editor(ui: &mut egui::Ui, edit: &mut Edit, l: &mut Levels) {
 }
 
 fn effect_body(ui: &mut egui::Ui, edit: &mut Edit, kind: &mut EffectKind) {
-    ui.spacing_mut().slider_width = (ui.available_width() - 120.0).max(60.0);
+    crate::ui_panels::fit_sliders(ui, 100.0);
     egui::Grid::new(ui.id().with("grid")).num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| match kind {
         EffectKind::Generator { source, levels, blend, opacity } => {
             match source {
@@ -281,7 +281,7 @@ pub fn stylize_editor(app: &mut App, ui: &mut egui::Ui, params: &StylizeParams) 
     let index = app.viewport.paint.active;
     let mut p = *params;
     let mut edit = Edit::default();
-    ui.spacing_mut().slider_width = (ui.available_width() - 130.0).max(60.0);
+    crate::ui_panels::fit_sliders(ui, 115.0);
     egui::Grid::new("stylize").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
         ui.label(RichText::new("Color").strong());
         ui.end_row();
