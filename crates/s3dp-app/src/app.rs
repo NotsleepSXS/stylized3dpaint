@@ -620,7 +620,7 @@ impl App {
         if pressed(Key::CloseBracket) {
             self.brush.size = (self.brush.size * 1.15).min(500.0);
         }
-        let fkeys = [Key::F1, Key::F2, Key::F3, Key::F4, Key::F5, Key::F6, Key::F7, Key::F8];
+        let fkeys = [Key::F1, Key::F2, Key::F3, Key::F4, Key::F5, Key::F6, Key::F7, Key::F8, Key::F9];
         for (k, mode) in fkeys.into_iter().zip(ShadingMode::ALL) {
             if pressed(k) {
                 self.shading = mode;

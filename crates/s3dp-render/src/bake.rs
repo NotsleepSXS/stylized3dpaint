@@ -122,6 +122,86 @@ impl Baker {
         }
     }
 
+    /// Rasterizes world position / normal of every texture set into its geometry textures
+    /// and fills the Position and World Normal maps (no ray tracing, instant).
+    pub fn rasterize_geometry(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        sets: &[TextureSet],
+        vertices: &wgpu::Buffer,
+        indices: &wgpu::Buffer,
+        bbox_min: [f32; 3],
+        bbox_size: [f32; 3],
+    ) {
+        let mut encoder = device.create_command_encoder(&Default::default());
+        for set in sets {
+            let (vp, vn) = (gpu::view(&set.geo_pos), gpu::view(&set.geo_nrm));
+            {
+                let attachment = |view| {
+                    Some(wgpu::RenderPassColorAttachment {
+                        view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+                    })
+                };
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("geometry"),
+                    color_attachments: &[attachment(&vp), attachment(&vn)],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(&self.gbuffer_a);
+                pass.set_vertex_buffer(0, vertices.slice(..));
+                pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(set.index_range(), 0, 0..1);
+            }
+            for (map, src, mode) in [(BakedMap::WorldNormal, &set.geo_nrm, 2.0), (BakedMap::Position, &set.geo_pos, 3.0)] {
+                let params = ExtractParams {
+                    mode: [mode, 0.0, 0.0, 0.0],
+                    bbox_min: [bbox_min[0], bbox_min[1], bbox_min[2], 0.0],
+                    bbox_size: [bbox_size[0], bbox_size[1], bbox_size[2], 0.0],
+                };
+                self.extract_into(device, &mut encoder, &params, src, &set.geo_pos, &set.baked[map.index()]);
+            }
+        }
+        queue.submit([encoder.finish()]);
+    }
+
+    fn extract_into(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        params: &ExtractParams,
+        src: &wgpu::Texture,
+        coverage: &wgpu::Texture,
+        out: &wgpu::Texture,
+    ) {
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("extract params"),
+            contents: bytemuck::bytes_of(params),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let pipeline = self.extract_pipeline(out.format());
+        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("extract"),
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() },
+                gpu::tex_entry(1, &gpu::view(src)),
+                gpu::tex_entry(2, &gpu::view(coverage)),
+            ],
+        });
+        let view = gpu::view(out);
+        let mut pass = gpu::pass(encoder, &view, wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT));
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &bg, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
     fn extract_pipeline(&self, format: wgpu::TextureFormat) -> &wgpu::RenderPipeline {
         &self.extract.iter().find(|(f, _)| *f == format).expect("extract pipeline").1
     }
@@ -458,7 +538,6 @@ impl BakeJob {
         }
 
         let mut encoder = device.create_command_encoder(&Default::default());
-        let coverage = gpu::view(&work.g_pos);
         for map in BakedMap::ALL {
             let (src, mode, channel) = match map {
                 BakedMap::AmbientOcclusion => (&work.maps_a, 0.0, 0.0),
@@ -476,27 +555,7 @@ impl BakeJob {
                 bbox_min: [self.bbox_min[0], self.bbox_min[1], self.bbox_min[2], 0.0],
                 bbox_size: [self.bbox_size[0], self.bbox_size[1], self.bbox_size[2], 0.0],
             };
-            let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("extract params"),
-                contents: bytemuck::bytes_of(&params),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
-            let out = &set.baked[map.index()];
-            let pipeline = baker.extract_pipeline(out.format());
-            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("extract"),
-                layout: &pipeline.get_bind_group_layout(0),
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() },
-                    gpu::tex_entry(1, &gpu::view(src)),
-                    gpu::tex_entry(2, &coverage),
-                ],
-            });
-            let view = gpu::view(out);
-            let mut pass = gpu::pass(&mut encoder, &view, wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT));
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &bg, &[]);
-            pass.draw(0..3, 0..1);
+            baker.extract_into(device, &mut encoder, &params, src, &work.g_pos, &set.baked[map.index()]);
         }
         queue.submit([encoder.finish()]);
     }

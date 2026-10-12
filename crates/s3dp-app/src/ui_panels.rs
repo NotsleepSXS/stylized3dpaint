@@ -161,7 +161,7 @@ pub fn menu_bar(app: &mut App, ui: &mut egui::Ui) {
                 "B brush · E eraser · I eyedropper\n[ ] brush size · X swap colors · D default colors\n\
                  Alt+LMB / MMB orbit · RMB / Shift+MMB pan · Wheel zoom · F frame\n\
                  Ctrl+Z / Ctrl+Shift+Z undo / redo · Ctrl+J duplicate layer\n\
-                 Ctrl+Shift+N new layer · Del delete layer · F1–F8 viewport mode · Ctrl+B bake",
+                 Ctrl+Shift+N new layer · Del delete layer · F1–F9 viewport mode · Ctrl+B bake",
             );
         });
     });
@@ -296,12 +296,17 @@ pub fn dock(app: &mut App, ui: &mut egui::Ui) {
     let width = ui.max_rect().width();
     ui.set_max_width(width);
     ui.spacing_mut().item_spacing.y = 0.0;
-    panel_header(ui, "Color");
-    panel_body(ui, |ui| color_panel(app, ui));
-    panel_header(ui, "Material");
-    panel_body(ui, |ui| material_panel(app, ui));
-    panel_header(ui, "Properties");
-    panel_body(ui, |ui| properties_panel(app, ui));
+    // Upper panels scroll; the Layers panel keeps at least ~280 px.
+    let upper = (ui.available_height() - 300.0).max(200.0);
+    egui::ScrollArea::vertical().id_salt("dock_upper").max_height(upper).auto_shrink([false, true]).show(ui, |ui| {
+        ui.set_width(width);
+        panel_header(ui, "Color");
+        panel_body(ui, |ui| color_panel(app, ui));
+        panel_header(ui, "Material");
+        panel_body(ui, |ui| material_panel(app, ui));
+        panel_header(ui, "Properties");
+        panel_body(ui, |ui| properties_panel(app, ui));
+    });
     panel_header(ui, "Layers");
     egui::Frame::new().fill(theme::CHROME).show(ui, |ui| {
         ui.set_width(ui.available_width());
@@ -396,7 +401,11 @@ fn properties_panel(app: &mut App, ui: &mut egui::Ui) {
     let index = app.viewport.paint.active;
     let Some(layer) = app.viewport.paint.active_layer().cloned() else { return };
     ui.horizontal(|ui| {
-        let kind = if layer.is_fill() { format!("{} Fill layer", icon::PAINT_BUCKET) } else { format!("{} Paint layer", icon::PAINT_BRUSH) };
+        let kind = match layer.kind {
+            LayerKind::Paint => format!("{} Paint layer", icon::PAINT_BRUSH),
+            LayerKind::Fill(_) => format!("{} Fill layer", icon::PAINT_BUCKET),
+            LayerKind::Stylize(_) => format!("{} Stylize filter", icon::MAGIC_WAND),
+        };
         ui.label(RichText::new(kind).strong());
         ui.label(RichText::new(&layer.name).color(theme::TEXT_DIM));
     });
@@ -407,12 +416,21 @@ fn properties_panel(app: &mut App, ui: &mut egui::Ui) {
             app.viewport.paint.edit_layer(index, true, |l| l.channels = mask);
         }
     });
-    if let LayerKind::Fill(values) = &layer.kind {
-        let mut v = *values;
-        if let Some(checkpoint) = values_editor(ui, "fill_values", &mut v) {
-            app.viewport.paint.edit_layer(index, checkpoint, |l| l.kind = LayerKind::Fill(v));
+    match &layer.kind {
+        LayerKind::Fill(values) => {
+            let mut v = *values;
+            if let Some(checkpoint) = values_editor(ui, "fill_values", &mut v) {
+                app.viewport.paint.edit_layer(index, checkpoint, |l| l.kind = LayerKind::Fill(v));
+            }
         }
+        LayerKind::Stylize(p) => crate::ui_effects::stylize_editor(app, ui, p),
+        LayerKind::Paint => {}
     }
+    ui.add_space(4.0);
+    egui::CollapsingHeader::new(RichText::new(format!("{} Mask effects", icon::SPARKLE)).strong())
+        .id_salt(("mask_effects", layer.id))
+        .default_open(true)
+        .show(ui, |ui| crate::ui_effects::effects_editor(app, ui));
     ui.add_space(4.0);
     egui::CollapsingHeader::new("Base material").id_salt("base_material").show(ui, |ui| {
         ui.label(RichText::new("Values under all layers").color(theme::TEXT_FAINT).small());

@@ -120,6 +120,16 @@ fn fs_main(i: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
         case 5u: { col = srgb_to_linear(vec3<f32>(metal)); }
         case 6u: { col = srgb_to_linear(vec3<f32>(height)); }
         case 7u: { col = emissive; }
+        case 8u: {
+            // Toon: three-tone ramp with soft steps, cool shadows and a rim light.
+            let key = normalize(vec3<f32>(0.5, 0.8, 0.4));
+            let d = dot(bn, key) * 0.5 + 0.5;
+            let ramp = smoothstep(0.38, 0.42, d) * 0.45 + smoothstep(0.68, 0.72, d) * 0.35 + 0.2;
+            let shadow = vec3<f32>(0.55, 0.6, 0.85);
+            let light = mix(shadow, vec3<f32>(1.0, 0.97, 0.9), ramp);
+            let rim = smoothstep(0.62, 0.68, 1.0 - max(dot(bn, v), 0.0)) * 0.35;
+            col = albedo * light * mix(1.0, ao, 0.5) + rim * albedo + emissive;
+        }
         case 100u: { col = srgb_to_linear(vec3<f32>(ao)); }
         case 101u: { col = srgb_to_linear(textureSample(curvature_tex, paint_sampler, i.uv).rrr); }
         case 102u: { col = srgb_to_linear(textureSample(edges_tex, paint_sampler, i.uv).rrr); }

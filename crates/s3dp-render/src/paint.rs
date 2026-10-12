@@ -15,6 +15,7 @@ use egui_wgpu::wgpu;
 use glam::Mat4;
 use s3dp_core::{BakedMap, Channel, ChannelMask, ChannelValues, Layer, LayerKind, Mesh, OrbitCamera, Vertex};
 
+use crate::effects::{EffectInputs, EffectRenderer, FX_FORMAT, MeshScale, stylize_uniform};
 use crate::gpu::{self, LAYER_USAGE};
 
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -110,6 +111,11 @@ pub struct TextureSet {
     pub display: Vec<wgpu::Texture>,
     /// Baked mesh maps, indexed by [`BakedMap::index`].
     pub baked: Vec<wgpu::Texture>,
+    /// World position (w = coverage) and normal per texel; filled when the mesh is set.
+    pub geo_pos: wgpu::Texture,
+    pub geo_nrm: wgpu::Texture,
+    white_mask: wgpu::Texture,
+    fx_tmp: [wgpu::Texture; 2],
     /// Group 1 of the viewport shader.
     pub(crate) view_bg: wgpu::BindGroup,
 }
@@ -193,6 +199,15 @@ pub struct Painter {
     pub thumb_set: usize,
     /// Bumped on every document change (for "unsaved changes" tracking).
     revision: u64,
+    effects: EffectRenderer,
+    stylize_pipeline: wgpu::RenderPipeline,
+    stylize_params: wgpu::Buffer,
+    stylize_capacity: u64,
+    /// Effective masks of layers with effects: (layer id, set) -> (input hash, texture).
+    fx_cache: FxCache,
+    baked_revision: u64,
+    /// Mesh size, used to scale effect settings.
+    pub scale: MeshScale,
 }
 
 fn uv_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
@@ -214,6 +229,17 @@ fn shader(device: &wgpu::Device, label: &str, src: &str) -> wgpu::ShaderModule {
 
 fn rgb_color(v: [f32; 3]) -> wgpu::Color {
     wgpu::Color { r: v[0] as f64, g: v[1] as f64, b: v[2] as f64, a: 1.0 }
+}
+
+type FxCache = HashMap<(u64, usize), (u64, wgpu::Texture)>;
+
+/// Effective mask of a layer in a texture set: generated (effects) or painted.
+fn effective_mask<'a>(fx_cache: &'a FxCache, layer: &'a GpuLayer, si: usize) -> Option<&'a wgpu::Texture> {
+    let m = &layer.meta;
+    if m.effects.iter().any(|e| e.enabled) {
+        return fx_cache.get(&(m.id, si)).map(|c| &c.1);
+    }
+    if m.has_mask && m.mask_enabled { layer.sets[si].mask.as_ref() } else { None }
 }
 
 fn uniform_slice(buffer: &wgpu::Buffer, offset: u64) -> wgpu::BindingResource<'_> {
@@ -378,6 +404,16 @@ impl Painter {
             thumb_revision: 0,
             thumb_set: 0,
             revision: 0,
+            effects: EffectRenderer::new(device),
+            stylize_pipeline: {
+                let m = shader(device, "stylize", include_str!("stylize.wgsl"));
+                gpu::fullscreen_pipeline(device, "stylize", &m, "fs_stylize", ACC_FORMAT)
+            },
+            stylize_params: Self::make_blend_buffer(device, 64),
+            stylize_capacity: 64,
+            fx_cache: HashMap::new(),
+            baked_revision: 0,
+            scale: MeshScale::default(),
         }
     }
 
@@ -444,6 +480,11 @@ impl Painter {
                     t
                 })
                 .collect();
+            let geo_pos = gpu::texture(device, "geometry position", size, wgpu::TextureFormat::Rgba32Float, U::RENDER_ATTACHMENT | U::TEXTURE_BINDING);
+            let geo_nrm = gpu::texture(device, "geometry normal", size, wgpu::TextureFormat::Rgba16Float, U::RENDER_ATTACHMENT | U::TEXTURE_BINDING);
+            let white_mask = gpu::texture(device, "white mask", size, MASK_FORMAT, LAYER_USAGE);
+            gpu::clear(&mut encoder, &white_mask, wgpu::Color::WHITE);
+            let fx_tmp = [0, 1].map(|_| gpu::texture(device, "effect tmp", size, FX_FORMAT, LAYER_USAGE));
             let views: Vec<wgpu::TextureView> = display.iter().chain(&baked).map(gpu::view).collect();
             let mut entries: Vec<wgpu::BindGroupEntry> =
                 views.iter().enumerate().map(|(i, v)| gpu::tex_entry(i as u32, v)).collect();
@@ -469,11 +510,26 @@ impl Painter {
                 acc,
                 display,
                 baked,
+                geo_pos,
+                geo_nrm,
+                white_mask,
+                fx_tmp,
                 view_bg,
             });
         }
         queue.submit([encoder.finish()]);
+        self.fx_cache.clear();
+        self.scale = {
+            let b = mesh.bounds();
+            MeshScale { radius: b.radius(), bbox_min: b.min.into(), bbox_size: (b.max - b.min).max(glam::Vec3::splat(1e-6)).into() }
+        };
         self.reset_document();
+    }
+
+    /// Baked maps or geometry textures changed: generators must recompute.
+    pub fn baked_changed(&mut self) {
+        self.baked_revision += 1;
+        self.mark_all_dirty();
     }
 
     /// One empty paint layer, no history.
@@ -583,11 +639,21 @@ impl Painter {
 
     /// Adds a layer above the active one and selects it.
     pub fn add_layer(&mut self, kind: LayerKind) {
+        self.add_layer_with(kind, |_| {});
+    }
+
+    /// Adds a layer and customizes it (name, blend, effects...) in one undo step.
+    pub fn add_layer_with(&mut self, kind: LayerKind, setup: impl FnOnce(&mut Layer)) {
         self.checkpoint();
         let fill = matches!(kind, LayerKind::Fill(_));
         let count = self.layers.iter().filter(|l| l.meta.is_fill() == fill).count() + 1;
-        let name = if fill { format!("Fill {count}") } else { format!("Layer {count}") };
-        let meta = self.new_layer_meta(&name, kind);
+        let name = match kind {
+            LayerKind::Stylize(_) => "Stylize".to_owned(),
+            LayerKind::Fill(_) => format!("Fill {count}"),
+            LayerKind::Paint => format!("Layer {count}"),
+        };
+        let mut meta = self.new_layer_meta(&name, kind);
+        setup(&mut meta);
         let at = if self.layers.is_empty() { 0 } else { self.active + 1 };
         let layer = self.gpu_layer(meta);
         self.layers.insert(at, layer);
@@ -894,15 +960,50 @@ impl Painter {
         }
     }
 
+
+    /// Recomputes effect masks whose inputs changed.
+    fn update_effect_masks(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
+        use std::hash::{Hash, Hasher};
+        let ids: Vec<u64> = self.layers.iter().map(|l| l.meta.id).collect();
+        self.fx_cache.retain(|k, _| ids.contains(&k.0));
+        for layer in &self.layers {
+            let m = &layer.meta;
+            if !m.effects.iter().any(|e| e.enabled) {
+                continue;
+            }
+            for (si, set) in self.sets.iter().enumerate() {
+                let base = if m.has_mask && m.mask_enabled { layer.sets[si].mask.as_ref() } else { None };
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                format!("{:?}", m.effects).hash(&mut h);
+                base.hash(&mut h);
+                self.baked_revision.hash(&mut h);
+                set.size.hash(&mut h);
+                let key = h.finish();
+                if self.fx_cache.get(&(m.id, si)).is_some_and(|c| c.0 == key) {
+                    continue;
+                }
+                let inputs = EffectInputs { geo_pos: &set.geo_pos, geo_nrm: &set.geo_nrm, baked: &set.baked, tmp: &set.fx_tmp };
+                let base = base.unwrap_or(&set.white_mask);
+                let tex = self.effects.run(device, encoder, &m.effects, base, &inputs, &self.scale);
+                self.fx_cache.insert((m.id, si), (key, tex));
+            }
+        }
+    }
+
     /// Blends the layer stack for every dirty channel into the display textures.
     fn composite(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder) {
         if !self.dirty.iter().any(|&d| d) || self.sets.is_empty() {
             return;
         }
-        // Plan all draws first so their parameters go into one dynamic uniform buffer.
-        // Each draw: (source texture, mask texture, parameter index).
-        type Draw<'a> = (Option<&'a wgpu::Texture>, Option<&'a wgpu::Texture>, usize);
+        self.update_effect_masks(device, encoder);
+
+        // Plan all draws first so their parameters go into dynamic uniform buffers.
+        enum Draw<'a> {
+            Blend { src: Option<&'a wgpu::Texture>, mask: Option<&'a wgpu::Texture>, param: usize },
+            Stylize { mask: Option<&'a wgpu::Texture>, param: usize },
+        }
         let mut params: Vec<Vec4Pair> = Vec::new();
+        let mut stylize: Vec<crate::effects::StylizeUniform> = Vec::new();
         let mut plan: Vec<(usize, Channel, Vec<Draw>)> = Vec::new();
         for si in 0..self.sets.len() {
             for c in Channel::ALL.into_iter().filter(|c| self.dirty[c.index()]) {
@@ -912,17 +1013,28 @@ impl Painter {
                     if !m.visible || !m.channels.has(c) || m.opacity <= 0.0 {
                         continue;
                     }
-                    let tex = &layer.sets[si];
+                    let mask = effective_mask(&self.fx_cache, layer, si);
                     let (src, kind, fill) = match &m.kind {
-                        LayerKind::Paint => match &tex.channels[c.index()] {
+                        LayerKind::Paint => match &layer.sets[si].channels[c.index()] {
                             Some(t) => (Some(t), if c.is_color() { 0.0 } else { 1.0 }, [0.0; 3]),
                             None => continue,
                         },
                         LayerKind::Fill(v) => (None, 2.0, v.get(c)),
+                        LayerKind::Stylize(p) => {
+                            let channel = match c {
+                                Channel::BaseColor => 0,
+                                Channel::Roughness => 1,
+                                Channel::Metallic => 2,
+                                Channel::Height => 3,
+                                Channel::Emissive => continue,
+                            };
+                            draws.push(Draw::Stylize { mask, param: stylize.len() });
+                            stylize.push(stylize_uniform(p, channel, m.opacity, mask.is_some()));
+                            continue;
+                        }
                     };
-                    let mask = if m.has_mask && m.mask_enabled { tex.mask.as_ref() } else { None };
                     let blend = if c.is_color() { m.blend.gpu_id() } else { 0 };
-                    draws.push((src, mask, params.len()));
+                    draws.push(Draw::Blend { src, mask, param: params.len() });
                     params.push(Vec4Pair {
                         a: [fill[0], fill[1], fill[2], 1.0],
                         b: [m.opacity, blend as f32, kind, if mask.is_some() { 1.0 } else { 0.0 }],
@@ -935,37 +1047,80 @@ impl Painter {
             self.blend_capacity = (params.len() as u64).next_power_of_two();
             self.blend_params = Self::make_blend_buffer(device, self.blend_capacity);
         }
-        if !params.is_empty() {
-            let mut bytes = vec![0u8; params.len() * UNIFORM_STRIDE as usize];
-            for (i, p) in params.iter().enumerate() {
-                let at = i * UNIFORM_STRIDE as usize;
-                bytes[at..at + std::mem::size_of::<Vec4Pair>()].copy_from_slice(bytemuck::bytes_of(p));
-            }
-            queue.write_buffer(&self.blend_params, 0, &bytes);
+        if stylize.len() as u64 > self.stylize_capacity {
+            self.stylize_capacity = (stylize.len() as u64).next_power_of_two();
+            self.stylize_params = Self::make_blend_buffer(device, self.stylize_capacity);
         }
+        fn upload<T: bytemuck::Pod>(queue: &wgpu::Queue, buffer: &wgpu::Buffer, items: &[T]) {
+            if items.is_empty() {
+                return;
+            }
+            let mut bytes = vec![0u8; items.len() * UNIFORM_STRIDE as usize];
+            for (i, p) in items.iter().enumerate() {
+                let at = i * UNIFORM_STRIDE as usize;
+                bytes[at..at + std::mem::size_of::<T>()].copy_from_slice(bytemuck::bytes_of(p));
+            }
+            queue.write_buffer(buffer, 0, &bytes);
+        }
+        upload(queue, &self.blend_params, &params);
+        upload(queue, &self.stylize_params, &stylize);
 
         let dummy = gpu::view(&self.dummy);
+        let stylize_layout = self.stylize_pipeline.get_bind_group_layout(0);
         for (si, c, draws) in plan {
             let set = &self.sets[si];
             let acc = [gpu::view(&set.acc[0]), gpu::view(&set.acc[1])];
             gpu::pass(encoder, &acc[0], wgpu::LoadOp::Clear(rgb_color(self.defaults.get(c))));
             let mut cur = 0;
-            for (src, mask, pi) in draws {
-                let src = src.map(gpu::view);
-                let mask = mask.map(gpu::view);
-                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("blend"),
-                    layout: &self.blend_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry { binding: 0, resource: uniform_slice(&self.blend_params, 0) },
-                        gpu::tex_entry(1, &acc[cur]),
-                        gpu::tex_entry(2, src.as_ref().unwrap_or(&dummy)),
-                        gpu::tex_entry(3, mask.as_ref().unwrap_or(&dummy)),
-                    ],
-                });
+            for draw in draws {
+                let (pipeline, bg, offset) = match draw {
+                    Draw::Blend { src, mask, param } => {
+                        let src = src.map(gpu::view);
+                        let mask = mask.map(gpu::view);
+                        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some("blend"),
+                            layout: &self.blend_layout,
+                            entries: &[
+                                wgpu::BindGroupEntry { binding: 0, resource: uniform_slice(&self.blend_params, 0) },
+                                gpu::tex_entry(1, &acc[cur]),
+                                gpu::tex_entry(2, src.as_ref().unwrap_or(&dummy)),
+                                gpu::tex_entry(3, mask.as_ref().unwrap_or(&dummy)),
+                            ],
+                        });
+                        (&self.blend_pipeline, bg, Some((param as u64 * UNIFORM_STRIDE) as u32))
+                    }
+                    Draw::Stylize { mask, param } => {
+                        let mask = mask.map(gpu::view);
+                        let baked = |m: BakedMap| gpu::view(&set.baked[m.index()]);
+                        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some("stylize"),
+                            layout: &stylize_layout,
+                            entries: &[
+                                wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                        buffer: &self.stylize_params,
+                                        offset: param as u64 * UNIFORM_STRIDE,
+                                        size: wgpu::BufferSize::new(std::mem::size_of::<crate::effects::StylizeUniform>() as u64),
+                                    }),
+                                },
+                                gpu::tex_entry(1, &acc[cur]),
+                                gpu::tex_entry(2, mask.as_ref().unwrap_or(&dummy)),
+                                gpu::tex_entry(3, &baked(BakedMap::Edges)),
+                                gpu::tex_entry(4, &baked(BakedMap::Cavity)),
+                                gpu::tex_entry(5, &baked(BakedMap::AmbientOcclusion)),
+                                gpu::tex_entry(6, &baked(BakedMap::SkyLight)),
+                            ],
+                        });
+                        (&self.stylize_pipeline, bg, None)
+                    }
+                };
                 let mut pass = gpu::pass(encoder, &acc[1 - cur], wgpu::LoadOp::Clear(wgpu::Color::BLACK));
-                pass.set_pipeline(&self.blend_pipeline);
-                pass.set_bind_group(0, &bg, &[(pi as u64 * UNIFORM_STRIDE) as u32]);
+                pass.set_pipeline(pipeline);
+                match offset {
+                    Some(o) => pass.set_bind_group(0, &bg, &[o]),
+                    None => pass.set_bind_group(0, &bg, &[]),
+                }
                 pass.draw(0..3, 0..1);
                 cur = 1 - cur;
             }
@@ -1003,7 +1158,7 @@ impl Painter {
             let tex = &layer.sets[si];
             let sources = [
                 (false, tex.channels[Channel::BaseColor.index()].clone(), 0.0),
-                (true, if layer.meta.has_mask { tex.mask.clone() } else { None }, 2.0),
+                (true, effective_mask(&self.fx_cache, layer, si).cloned().or_else(|| if layer.meta.has_mask { tex.mask.clone() } else { None }), 2.0),
             ];
             for (is_mask, source, mode) in sources {
                 let key = (layer.meta.id, is_mask);

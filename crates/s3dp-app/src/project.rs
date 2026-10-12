@@ -217,6 +217,7 @@ pub fn load(path: &Path, viewport: &mut Viewport, device: &wgpu::Device, queue: 
             }
         }
     }
+    viewport.paint.baked_changed();
     Ok((mesh, bake))
 }
 

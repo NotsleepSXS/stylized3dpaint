@@ -15,6 +15,7 @@ const PICK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 pub enum ShadingMode {
     #[default]
     Lit,
+    Toon,
     Unlit,
     UvChecker,
     Normals,
@@ -28,8 +29,9 @@ pub enum ShadingMode {
 
 impl ShadingMode {
     /// Material modes (F1–F8); baked maps are listed separately.
-    pub const ALL: [ShadingMode; 8] = [
+    pub const ALL: [ShadingMode; 9] = [
         Self::Lit,
+        Self::Toon,
         Self::Unlit,
         Self::UvChecker,
         Self::Normals,
@@ -50,12 +52,14 @@ impl ShadingMode {
             Self::Metallic => 5,
             Self::Height => 6,
             Self::Emissive => 7,
+            Self::Toon => 8,
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Lit => "Lit",
+            Self::Toon => "Toon",
             Self::Unlit => "Unlit (albedo)",
             Self::UvChecker => "UV Checker",
             Self::Normals => "Normals",
@@ -288,6 +292,10 @@ impl Viewport {
         });
         self.texture_size = texture_size;
         self.paint.set_mesh(device, queue, mesh, &vertices, &indices, &self.view_layout, texture_size);
+        let scale = self.paint.scale;
+        self.baker.rasterize_geometry(device, queue, &self.paint.sets, &vertices, &indices, scale.bbox_min, scale.bbox_size);
+        self.paint.baked_changed();
+        self.bake = None;
         self.mesh = Some(GpuMesh { vertices, indices, index_count: mesh.indices.len() as u32 });
     }
 
@@ -368,6 +376,7 @@ impl Viewport {
         if let Some(mesh) = &self.mesh {
             job.run_to_end(device, queue, &self.baker, &self.paint.sets, &mesh.vertices, &mesh.indices);
         }
+        self.paint.baked_changed();
     }
 
     pub fn texture_size(&self) -> u32 {
@@ -444,6 +453,7 @@ impl Viewport {
             if job.is_done() {
                 self.bake = None;
                 self.bake_finished = true;
+                self.paint.baked_changed();
             }
         }
         let targets = self.targets.as_ref().unwrap();

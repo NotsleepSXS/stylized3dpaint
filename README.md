@@ -3,7 +3,7 @@
 Open-source 3D texture painter focused on stylized / hand-painted texturing.
 Written in Rust with wgpu and egui.
 
-**Status:** early development — milestone M3: GPU mesh map baking.
+**Status:** early development — milestone M4: generators, warp filters, Stylize layer.
 
 ## Build
 
@@ -24,7 +24,7 @@ Supported model formats: glTF/GLB, FBX, OBJ.
 | Pan | RMB, Alt+MMB or Shift+MMB |
 | Zoom | Wheel or Alt+RMB |
 | Frame model | F |
-| Viewport mode | F1–F8 (Lit, Unlit, UV, Normals, Roughness, Metallic, Height, Emissive) |
+| Viewport mode | F1–F9 (Lit, Toon, Unlit, UV, Normals, Roughness, Metallic, Height, Emissive) |
 | Undo / redo | Ctrl+Z / Ctrl+Shift+Z |
 | New layer / duplicate / delete | Ctrl+Shift+N / Ctrl+J / Del |
 | New / open / save / export | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+E |
@@ -39,6 +39,11 @@ Supported model formats: glTF/GLB, FBX, OBJ.
 - GPU ray-traced baking (BVH + compute shaders), with or without a high-poly source.
   *Stylized* mode bakes wide soft edge / cavity masks, painterly AO, a sky light with soft
   shadows and geometry-aware smoothing — maps meant to be layered for hand-painted looks
+- Mask effect stacks: generators from baked maps, height gradients and seamless 3D noise
+  (Perlin, Cellular, brush Strokes), filters **Warp**, **Slope Blur**, **Directional**, Blur, Levels
+- **Stylize** filter layer: painterly simplification, value bands, warm lights / cool shadows,
+  edge highlights, cavity darkening, simplified roughness, crisp metal, beveled height
+- Smart layers: Edge highlight, Cavity dirt, Top light, Bottom shadow
 - `.s3dp` project files (zip: mesh + layer PNGs + baked maps + JSON)
 - PNG export of all channel maps per texture set
 
@@ -54,7 +59,7 @@ Icons: [Phosphor](https://phosphoricons.com) via `egui-phosphor` (MIT).
 - **M1** – brush painting on the mesh (texture-space projection, seam dilation, undo, PNG export) ✅
 - **M2** – layers, masks, Photoshop blend modes, material channels, eyedropper, `.s3dp` project files, Photoshop-style UI ✅
 - **M3** – GPU mesh map baking from the mesh itself or a high-poly: AO, curvature, edges, cavity, thickness, sky light, normal, world normal, position; Realistic and Stylized modes ✅
-- **M4** – stylized generators (edge highlight, cavity, height gradient, toon ramp, palettes), toon & PBR viewport
+- **M4** – mask generators (baked maps, height gradient, 3D noise), Warp / Slope Blur / Directional filters, Stylize filter layer, smart layers, Toon viewport ✅
 - **M5** – export presets for Unreal, Unity, Godot, Blender
 
 ## License

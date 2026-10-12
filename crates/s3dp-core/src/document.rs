@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::effects::{MaskEffect, StylizeParams};
+
 /// Material channels painted on every texture set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Channel {
@@ -195,6 +197,8 @@ pub enum LayerKind {
     Paint,
     /// Uniform values everywhere (shaped by the mask).
     Fill(ChannelValues),
+    /// Processes the result of the layers below it.
+    Stylize(StylizeParams),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -209,6 +213,9 @@ pub struct Layer {
     pub channels: ChannelMask,
     pub has_mask: bool,
     pub mask_enabled: bool,
+    /// Generators and filters shaping the mask, applied in order.
+    #[serde(default)]
+    pub effects: Vec<MaskEffect>,
 }
 
 impl Layer {
@@ -223,10 +230,21 @@ impl Layer {
             channels: ChannelMask::ALL,
             has_mask: false,
             mask_enabled: true,
+            effects: Vec::new(),
         }
     }
 
+    /// Layers whose content is not painted (fill, filters).
     pub fn is_fill(&self) -> bool {
-        matches!(self.kind, LayerKind::Fill(_))
+        !matches!(self.kind, LayerKind::Paint)
+    }
+
+    pub fn is_filter(&self) -> bool {
+        matches!(self.kind, LayerKind::Stylize(_))
+    }
+
+    /// Whether the layer has an effective mask (painted and/or generated).
+    pub fn uses_mask(&self) -> bool {
+        (self.has_mask && self.mask_enabled) || self.effects.iter().any(|e| e.enabled)
     }
 }

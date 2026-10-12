@@ -44,6 +44,7 @@ pub fn layer_menu(app: &mut App, ui: &mut egui::Ui) {
     if ui.button(format!("{} New fill layer", icon::PAINT_BUCKET)).clicked() {
         app.viewport.paint.add_layer(LayerKind::Fill(fill_from(app)));
     }
+    ui.menu_button(format!("{} Smart layers", icon::MAGIC_WAND), |ui| crate::ui_effects::presets_menu(app, ui));
     ui.separator();
     if ui.add(egui::Button::new(format!("{} Duplicate layer", icon::COPY)).shortcut_text("Ctrl+J")).clicked() {
         app.viewport.paint.duplicate_layer(active);
@@ -189,6 +190,10 @@ fn layer_row(app: &mut App, ui: &mut egui::Ui, index: usize, actions: &mut Vec<A
             let ink = if lum > 0.5 { Color32::from_black_alpha(160) } else { Color32::from_white_alpha(180) };
             painter.text(thumb_rect.center(), egui::Align2::CENTER_CENTER, icon::PAINT_BUCKET, egui::FontId::proportional(16.0), ink);
         }
+        LayerKind::Stylize(_) => {
+            painter.rect_filled(thumb_rect, 0.0, theme::ACCENT_SOFT);
+            painter.text(thumb_rect.center(), egui::Align2::CENTER_CENTER, icon::MAGIC_WAND, egui::FontId::proportional(17.0), Color32::WHITE);
+        }
     }
     painter.rect_stroke(thumb_rect, 0.0, egui::Stroke::new(1.0, Color32::from_gray(20)), egui::StrokeKind::Outside);
     let thumb_resp = ui.interact(thumb_rect, ui.id().with(("thumb", layer.id)), Sense::click());
@@ -199,7 +204,8 @@ fn layer_row(app: &mut App, ui: &mut egui::Ui, index: usize, actions: &mut Vec<A
 
     // Mask thumbnail.
     let mut mask_rect = None;
-    if layer.has_mask {
+    let generated = layer.effects.iter().any(|e| e.enabled);
+    if layer.has_mask || generated {
         let r = egui::Rect::from_min_size(egui::pos2(x, thumb_rect.top()), egui::vec2(THUMB, THUMB));
         painter.rect_filled(r, 0.0, Color32::BLACK);
         if let Some(tex) = app.thumb_texture(layer.id, true) {
@@ -353,6 +359,9 @@ fn footer(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             if small(ui, icon::PLUS, "New paint layer (Ctrl+Shift+N)").clicked() {
                 app.viewport.paint.add_layer(LayerKind::Paint);
             }
+            ui.menu_button(RichText::new(icon::MAGIC_WAND).size(15.0), |ui| crate::ui_effects::presets_menu(app, ui))
+                .response
+                .on_hover_text("Smart layers and the Stylize filter");
             if small(ui, icon::PAINT_BUCKET, "New fill layer (uses the foreground material)").clicked() {
                 let fill = fill_from(app);
                 app.viewport.paint.add_layer(LayerKind::Fill(fill));

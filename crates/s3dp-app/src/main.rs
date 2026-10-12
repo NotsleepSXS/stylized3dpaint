@@ -3,6 +3,7 @@ mod color_picker;
 mod project;
 mod theme;
 mod ui_bake;
+mod ui_effects;
 mod ui_layers;
 mod ui_panels;
 
