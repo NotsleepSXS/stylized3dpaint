@@ -4,6 +4,7 @@ mod i18n;
 mod project;
 mod theme;
 mod ui_bake;
+mod ui_dock;
 mod ui_export;
 mod ui_effects;
 mod ui_layers;

@@ -6,7 +6,7 @@ use egui_phosphor::regular as icon;
 use s3dp_core::{BakedMap, ChannelId};
 use s3dp_render::ShadingMode;
 
-use crate::app::{App, PropTab, TEXTURE_SIZES, Tool};
+use crate::app::{App, TEXTURE_SIZES, Tool};
 use crate::i18n::t;
 use crate::{theme, ui_effects, ui_layers};
 
@@ -74,29 +74,6 @@ pub fn chip(ui: &mut egui::Ui, text: &str, on: bool, tooltip: &str) -> egui::Res
     response.on_hover_text(tooltip)
 }
 
-/// Header strip of a dock panel with tabs. Returns the clicked tab.
-fn tab_strip<T: PartialEq + Copy>(ui: &mut egui::Ui, tabs: &[(T, &str)], current: T) -> Option<T> {
-    let mut clicked = None;
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), egui::Sense::hover());
-    ui.painter().rect_filled(rect, 0.0, theme::DOCK);
-    let mut x = rect.left() + 4.0;
-    for (tab, title) in tabs {
-        let galley = ui.painter().layout_no_wrap(title.to_string(), egui::FontId::proportional(12.0), theme::TEXT);
-        let w = galley.size().x + 22.0;
-        let r = egui::Rect::from_min_size(egui::pos2(x, rect.top() + 3.0), egui::vec2(w, 23.0));
-        let resp = ui.interact(r, ui.id().with(("tab", title)), egui::Sense::click());
-        let fill = if *tab == current { theme::CHROME } else if resp.hovered() { theme::HOVER.gamma_multiply(0.5) } else { theme::DOCK };
-        ui.painter().rect_filled(r, egui::CornerRadius { nw: 3, ne: 3, sw: 0, se: 0 }, fill);
-        let color = if *tab == current { theme::TEXT } else { theme::TEXT_DIM };
-        ui.painter().galley_with_override_text_color(r.left_center() + egui::vec2(11.0, -galley.size().y / 2.0), galley, color);
-        if resp.clicked() {
-            clicked = Some(*tab);
-        }
-        x += w + 2.0;
-    }
-    clicked
-}
-
 // ---------------------------------------------------------------------- menu
 
 pub fn menu_bar(app: &mut App, ui: &mut egui::Ui) {
@@ -154,6 +131,7 @@ pub fn menu_bar(app: &mut App, ui: &mut egui::Ui) {
                 crate::i18n::set_russian(ru);
             }
         });
+        ui.menu_button(t("Window"), |ui| crate::ui_dock::window_menu(app, ui));
         ui.menu_button(t("Help"), |ui| {
             ui.label(RichText::new(t("Shortcuts")).strong());
             ui.label(t(
@@ -225,7 +203,7 @@ fn color_swatches(app: &mut App, ui: &mut egui::Ui) {
         app.reset_colors();
     }
     if fg_resp.on_hover_text(t("Foreground color — edit it in the Brush tab")).clicked() {
-        app.prop_tab = PropTab::Brush;
+        app.focus_tab = Some(crate::ui_dock::Tab::Brush);
     }
 }
 
@@ -324,56 +302,9 @@ pub fn status_bar(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
-// ---------------------------------------------------------------------- dock
+// ---------------------------------------------------------------------- panel bodies
 
-/// Width of the right dock (fixed: widgets size themselves from it).
-pub const DOCK_WIDTH: f32 = 350.0;
-
-pub fn dock(app: &mut App, ui: &mut egui::Ui) {
-    // Contents go into a child Ui that never grows the panel: egui sizes a right panel whose
-    // content overflows from the content's right edge, which slid the viewport over the left
-    // part of the dock. Anything too wide is clipped instead.
-    let rect = ui.max_rect();
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Min)));
-    child.set_clip_rect(rect.intersect(ui.clip_rect()));
-    dock_contents(app, &mut child);
-    if child.min_rect().width() > rect.width() + 1.0 {
-        log::debug!("dock content overflows: {:.0} > {:.0}", child.min_rect().width(), rect.width());
-    }
-    ui.advance_cursor_after_rect(rect);
-}
-
-fn dock_contents(app: &mut App, ui: &mut egui::Ui) {
-    let width = DOCK_WIDTH;
-    ui.set_max_width(width);
-    ui.spacing_mut().item_spacing.y = 0.0;
-    let total = ui.available_height();
-    let layers_h = (total * 0.5).clamp(220.0, total - 220.0);
-    tab_strip(ui, &[(0, t("Layers"))], 0);
-    egui::Frame::new().fill(theme::CHROME).show(ui, |ui| {
-        ui.set_width(width);
-        ui.set_height(layers_h - 26.0);
-        ui_layers::layers_panel(app, ui);
-    });
-    let tabs = [(PropTab::Properties, t("Properties")), (PropTab::Brush, t("Brush")), (PropTab::Project, t("Project"))];
-    if let Some(tab) = tab_strip(ui, &tabs, app.prop_tab) {
-        app.prop_tab = tab;
-    }
-    egui::Frame::new().fill(theme::CHROME).inner_margin(egui::Margin::symmetric(10, 8)).show(ui, |ui| {
-        ui.set_width(width - 20.0);
-        ui.set_min_height(ui.available_height());
-        egui::ScrollArea::vertical().id_salt("properties").auto_shrink([false, false]).show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 5.0;
-            match app.prop_tab {
-                PropTab::Properties => ui_effects::properties(app, ui),
-                PropTab::Brush => brush_tab(app, ui),
-                PropTab::Project => project_tab(app, ui),
-            }
-        });
-    });
-}
-
-fn brush_tab(app: &mut App, ui: &mut egui::Ui) {
+pub fn brush_tab(app: &mut App, ui: &mut egui::Ui) {
     ui.label(RichText::new(t("Color")).strong());
     let mut srgb = app.fg_srgb();
     if crate::color_picker::picker(ui, &mut app.picker, &mut srgb, 120.0) {
@@ -409,7 +340,7 @@ fn brush_tab(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
-fn project_tab(app: &mut App, ui: &mut egui::Ui) {
+pub fn project_tab(app: &mut App, ui: &mut egui::Ui) {
     ui.label(RichText::new(t("Base material")).strong());
     ui.label(RichText::new(t("Values under all layers")).color(theme::TEXT_FAINT).small());
     let mut d = app.viewport.paint.doc.defaults.clone();

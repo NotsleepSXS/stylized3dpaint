@@ -38,13 +38,6 @@ impl Tool {
 }
 
 /// Tabs of the lower dock panel.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PropTab {
-    Properties,
-    Brush,
-    Project,
-}
-
 /// Brush shape settings shared by brush and eraser (size in logical points).
 pub struct BrushSettings {
     pub size: f32,
@@ -104,7 +97,10 @@ pub struct App {
 
     thumbs: HashMap<(u64, bool), (egui::TextureId, u64)>,
     pub layers_ui: ui_layers::LayersUi,
-    pub prop_tab: PropTab,
+    /// Dockable panel layout.
+    pub dock: egui_dock::DockState<crate::ui_dock::Tab>,
+    /// Panel to bring to front on the next frame.
+    pub focus_tab: Option<crate::ui_dock::Tab>,
     pub blend_clipboard: Option<Blending>,
     pending: Option<PendingAction>,
     allow_close: bool,
@@ -150,7 +146,8 @@ impl App {
             pen: None,
             thumbs: HashMap::new(),
             layers_ui: Default::default(),
-            prop_tab: PropTab::Properties,
+            dock: crate::ui_dock::load_layout(),
+            focus_tab: None,
             blend_clipboard: None,
             pending: None,
             allow_close: false,
@@ -436,7 +433,7 @@ impl App {
 
     // ------------------------------------------------------------------ viewport
 
-    fn viewport_ui(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn viewport_ui(&mut self, ui: &mut egui::Ui) {
         let rect = ui.available_rect_before_wrap();
         let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
         self.aspect = rect.width() / rect.height().max(1.0);
@@ -809,6 +806,7 @@ impl eframe::App for App {
     }
 
     fn on_exit(&mut self) {
+        crate::ui_dock::save_layout(&self.dock);
         // Stop the tablet thread while winit's Wayland display is still connected.
         #[cfg(target_os = "linux")]
         {
@@ -837,10 +835,8 @@ impl eframe::App for App {
         egui::Panel::top("options").exact_size(34.0).frame(egui::Frame::new().fill(theme::CHROME).inner_margin(egui::Margin::symmetric(8, 4))).show(ui, |ui| ui_panels::options_bar(self, ui));
         egui::Panel::bottom("status").frame(egui::Frame::new().fill(theme::DOCK).inner_margin(egui::Margin::symmetric(8, 3))).show(ui, |ui| ui_panels::status_bar(self, ui));
         egui::Panel::left("tools").exact_size(44.0).resizable(false).frame(egui::Frame::new().fill(theme::CHROME).inner_margin(egui::Margin::symmetric(4, 6))).show(ui, |ui| ui_panels::toolbar(self, ui));
-        // Fixed width: dock widgets size themselves from the panel width, so a resizable
-        // panel would grow in a feedback loop whenever a row overflows.
-        egui::Panel::right("dock").exact_size(ui_panels::DOCK_WIDTH).resizable(false).frame(egui::Frame::new().fill(theme::DOCK).inner_margin(egui::Margin::same(0))).show(ui, |ui| ui_panels::dock(self, ui));
-        egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| self.viewport_ui(ui));
+        // Viewport, Layers, Properties, Brush, Project: dockable tabs.
+        egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| crate::ui_dock::show(self, ui));
         ui_bake::bake_window(self, &ctx);
         ui_export::export_window(self, &ctx);
         if self.viewport.take_bake_finished() {

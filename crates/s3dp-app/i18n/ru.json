@@ -257,5 +257,9 @@
  "New folder (with several layers selected: group them)": "Новая папка (если выделено несколько слоёв — сгруппировать их)",
  "Add effect… (to every selected layer or its mask)": "Добавить эффект… (всем выделенным слоям или их маскам)",
  "On the layer": "На слое",
- "On the mask": "На маске"
+ "On the mask": "На маске",
+ "Viewport": "Вьюпорт",
+ "Window": "Окно",
+ "Reset panel layout": "Сбросить раскладку панелей",
+ "Drag a panel tab to move it; drag the gaps between panels to resize.": "Тяните вкладку панели, чтобы переместить её; тяните промежутки между панелями, чтобы менять размер."
 }
