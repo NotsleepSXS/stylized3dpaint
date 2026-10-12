@@ -3,11 +3,22 @@
 Open-source 3D texture painter focused on stylized / hand-painted texturing.
 Written in Rust with wgpu and egui.
 
-**Status:** early development — milestone M4: generators, warp filters, Stylize layer.
+**Status:** early development (pre-release). Builds and runs on Linux; Windows / macOS untested.
+
+| Lit | Toon |
+|-----|------|
+| ![Lit viewport](docs/images/showcase_lit.png) | ![Toon viewport](docs/images/showcase_toon.png) |
+
+*Test model with a Stylized bake and an effect stack: metal edge wear, edge highlight, cavity
+darken, hue shift by light — no hand painting.*
 
 ## Build
 
+Needs a recent stable Rust (edition 2024) and a Vulkan / Metal / DX12 capable GPU.
+
 ```sh
+git clone https://github.com/noslivideo/stylized3dpaint
+cd stylized3dpaint
 cargo run --release -- path/to/model.fbx
 ```
 
@@ -29,6 +40,7 @@ Supported model formats: glTF/GLB, FBX, OBJ.
 | New layer / duplicate / delete | Ctrl+Shift+N / Ctrl+J / Del |
 | New / open / save / export | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+E |
 | Bake mesh maps | Ctrl+B |
+| Pen (Wayland) | tip paints with pressure, eraser end erases, lower button orbits, upper button = RMB |
 
 ## Features
 
@@ -44,13 +56,22 @@ Supported model formats: glTF/GLB, FBX, OBJ.
 - **Stylize** filter layer: painterly simplification, value bands, warm lights / cool shadows,
   edge highlights, cavity darkening, simplified roughness, crisp metal, beveled height
 - Smart layers: Edge highlight, Cavity dirt, Top light, Bottom shadow
+- Declarative effect engine (JSON + WGSL per effect, UI generated from the definition):
+  wear (metal / wood edge wear, paint peel, rust, scratches, stone chips, wood grain) and
+  stylization (Stylization master filter, toon shading, posterize, palette lock, gradient map,
+  edge highlight, cavity darken, hue shift by light), each with Light / Medium / Strong / Stylized presets
+- Layer tree with folders, effect layers, anchors and per-channel blending
+- **Native Wayland pen tablet** support (`zwp_tablet_v2`): pressure → size / flow, eraser end, barrel buttons
 - `.s3dp` project files (zip: mesh + layer PNGs + baked maps + JSON)
-- PNG export of all channel maps per texture set
+- Export presets: Unreal (ORM / separate), Unity URP / HDRP, Godot, glTF, Stylized Unlit,
+  Spec/Gloss, Sketchfab — channel packing, padding, DirectX / OpenGL normals, PNG / TGA / TIFF / EXR / JPG
+- Russian and English UI
 
 ## Credits
 
 Blend-mode formulas and the dark UI palette are adapted from
-[PhotoCraft](https://github.com/storytold/photocraft) (MIT OR Apache-2.0).
+[PhotoCraft](https://github.com/storytold/photocraft) (MIT OR Apache-2.0); the tablet input
+design follows its `photocraft-tablet` notes.
 Icons: [Phosphor](https://phosphoricons.com) via `egui-phosphor` (MIT).
 
 ## Roadmap
@@ -60,8 +81,12 @@ Icons: [Phosphor](https://phosphoricons.com) via `egui-phosphor` (MIT).
 - **M2** – layers, masks, Photoshop blend modes, material channels, eyedropper, `.s3dp` project files, Photoshop-style UI ✅
 - **M3** – GPU mesh map baking from the mesh itself or a high-poly: AO, curvature, edges, cavity, thickness, sky light, normal, world normal, position; Realistic and Stylized modes ✅
 - **M4** – mask generators (baked maps, height gradient, 3D noise), Warp / Slope Blur / Directional filters, Stylize filter layer, smart layers, Toon viewport ✅
-- **M5** – export presets for Unreal, Unity, Godot, Blender
+- **M5** – effect engine, layer tree, wear / stylize effects, export presets ✅
+- **M6** – native Wayland pen pressure ✅
+- Next: X11 / Windows / macOS pen pressure, brush textures and tilt, release builds
+
+Known issues: [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
 
 ## License
 
-MIT OR Apache-2.0
+Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
