@@ -24,6 +24,10 @@ egui-phosphor.workspace = true
 bytemuck.workspace = true
 
 half.workspace = true
+raw-window-handle.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+s3dp-tablet.workspace = true
 
 [dev-dependencies]
 pollster = "1"

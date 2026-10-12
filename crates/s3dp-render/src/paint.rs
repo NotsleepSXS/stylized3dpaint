@@ -69,13 +69,19 @@ pub struct Brush {
     pub opacity: f32,
     pub flow: f32,
     pub erase: bool,
+    /// Pen pressure scales the dab radius (down to `min_size` of it).
+    pub pressure_size: bool,
+    /// Pen pressure scales the dab flow.
+    pub pressure_flow: bool,
+    /// Smallest radius share at zero pressure (0..1).
+    pub min_size: f32,
 }
 
 impl Default for Brush {
     fn default() -> Self {
         let mut values = ChannelValues::defaults();
         values.set(ChannelId::BaseColor, [0.7, 0.1, 0.05]);
-        Self { values, channels: ChannelSet::only(ChannelId::BaseColor), radius: 30.0, hardness: 0.6, opacity: 1.0, flow: 1.0, erase: false }
+        Self { values, channels: ChannelSet::only(ChannelId::BaseColor), radius: 30.0, hardness: 0.6, opacity: 1.0, flow: 1.0, erase: false, pressure_size: true, pressure_flow: false, min_size: 0.1 }
     }
 }
 
@@ -934,11 +940,23 @@ impl Painter {
         Ok(())
     }
 
+    /// Dabs at full pressure (mouse).
     pub fn add_dabs(&mut self, centers: &[[f32; 2]]) {
+        let with_pressure: Vec<[f32; 3]> = centers.iter().map(|c| [c[0], c[1], 1.0]).collect();
+        self.add_dabs_pressure(&with_pressure);
+    }
+
+    /// Dabs as `[x, y, pressure 0..1]`: pressure scales radius and / or flow per the brush.
+    pub fn add_dabs_pressure(&mut self, dabs: &[[f32; 3]]) {
         let Some(stroke) = &self.stroke else { return };
         let room = MAX_DABS.saturating_sub(self.pending.len());
-        let (r, f) = (stroke.brush.radius.max(0.5), stroke.brush.flow);
-        self.pending.extend(centers.iter().take(room).map(|c| [c[0], c[1], r, f]));
+        let b = &stroke.brush;
+        self.pending.extend(dabs.iter().take(room).map(|d| {
+            let p = if d[2].is_finite() { d[2].clamp(0.0, 1.0) } else { 1.0 };
+            let r = if b.pressure_size { b.radius * (b.min_size.clamp(0.0, 1.0) + (1.0 - b.min_size.clamp(0.0, 1.0)) * p) } else { b.radius };
+            let f = if b.pressure_flow { b.flow * p } else { b.flow };
+            [d[0], d[1], r.max(0.5), f]
+        }));
     }
 
     pub fn end_stroke(&mut self) {

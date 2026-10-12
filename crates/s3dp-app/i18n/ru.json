@@ -244,5 +244,9 @@
  "tris": "треуг.",
  "unknown effects": "неизвестные эффекты",
  "unsaved": "не сохранено",
- "warning(s)": "предупрежд."
+ "warning(s)": "предупрежд.",
+ "Pen pressure": "Давление пера",
+ "Pen pressure controls the brush size": "Давление пера меняет размер кисти",
+ "Pen pressure controls the flow": "Давление пера меняет поток",
+ "Min": "Мин."
 }

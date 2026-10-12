@@ -32,6 +32,8 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 log = "0.4"
 env_logger = "0.11"
 s3dp-export = { path = "crates/s3dp-export" }
+s3dp-tablet = { path = "crates/s3dp-tablet" }
+raw-window-handle = "0.6"
 exr = { version = "1.73", default-features = false }
 
 [profile.dev.package."*"]

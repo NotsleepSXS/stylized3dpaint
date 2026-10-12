@@ -239,6 +239,18 @@ pub fn options_bar(app: &mut App, ui: &mut egui::Ui) {
         ui.label(t("Flow"));
         percent(ui, &mut app.brush.flow, 0.01);
         ui.separator();
+        ui.label(egui_phosphor::regular::PEN_NIB).on_hover_text(t("Pen pressure"));
+        if chip(ui, t("Size"), app.brush.pressure_size, t("Pen pressure controls the brush size")).clicked() {
+            app.brush.pressure_size = !app.brush.pressure_size;
+        }
+        if app.brush.pressure_size {
+            ui.label(t("Min"));
+            percent(ui, &mut app.brush.min_size, 0.0);
+        }
+        if chip(ui, t("Flow"), app.brush.pressure_flow, t("Pen pressure controls the flow")).clicked() {
+            app.brush.pressure_flow = !app.brush.pressure_flow;
+        }
+        ui.separator();
         ui.label(t("Channels"));
         let what = if app.tool == Tool::Eraser { t("erased by the eraser") } else { t("painted by the brush") };
         for c in app.viewport.paint.doc.channels.iter() {

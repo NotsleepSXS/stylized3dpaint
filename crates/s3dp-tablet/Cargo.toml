@@ -1,0 +1,17 @@
+[package]
+name = "s3dp-tablet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Native Wayland pen tablet input (zwp_tablet_v2): pressure, tilt, eraser, pen buttons"
+
+# Only `src/wayland.rs` uses `unsafe` (binding to winit's foreign `wl_display`).
+[lints.rust]
+unsafe_code = "deny"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+wayland-backend = { version = "0.3.17", features = ["client_system"] }
+wayland-client = "0.31.15"
+wayland-protocols = { version = "0.32.13", features = ["client"] }
+rustix = { version = "1", features = ["event"] }
+log.workspace = true

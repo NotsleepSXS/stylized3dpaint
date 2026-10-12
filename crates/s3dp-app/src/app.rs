@@ -52,11 +52,16 @@ pub struct BrushSettings {
     pub opacity: f32,
     pub flow: f32,
     pub channels: ChannelSet,
+    /// Pen pressure controls the size / flow.
+    pub pressure_size: bool,
+    pub pressure_flow: bool,
+    /// Size share at the lightest pressure.
+    pub min_size: f32,
 }
 
 impl Default for BrushSettings {
     fn default() -> Self {
-        Self { size: 30.0, hardness: 0.6, opacity: 1.0, flow: 1.0, channels: ChannelSet::only(ChannelId::BaseColor) }
+        Self { size: 30.0, hardness: 0.6, opacity: 1.0, flow: 1.0, channels: ChannelSet::only(ChannelId::BaseColor), pressure_size: true, pressure_flow: false, min_size: 0.1 }
     }
 }
 
@@ -89,6 +94,13 @@ pub struct App {
     pub bg_color: [f32; 3],
     pub texture_size: u32,
     last_dab: Option<egui::Pos2>,
+    /// Pen pressure at the last dab.
+    last_pressure: f32,
+    /// Native Wayland tablet reader (None on X11 / without the protocol).
+    #[cfg(target_os = "linux")]
+    tablet: Option<s3dp_tablet::wayland::Tablet>,
+    /// The pen in the window: (pressure, eraser end). None for a mouse.
+    pub pen: Option<(f32, bool)>,
 
     thumbs: HashMap<(u64, bool), (egui::TextureId, u64)>,
     pub layers_ui: ui_layers::LayersUi,
@@ -132,6 +144,10 @@ impl App {
             bg_color: [1.0; 3],
             texture_size: 2048,
             last_dab: None,
+            last_pressure: 1.0,
+            #[cfg(target_os = "linux")]
+            tablet: start_tablet(cc),
+            pen: None,
             thumbs: HashMap::new(),
             layers_ui: Default::default(),
             prop_tab: PropTab::Properties,
@@ -359,6 +375,11 @@ impl App {
         self.bg_color = [1.0; 3];
     }
 
+    /// Current pen pressure (1 for a mouse).
+    fn pressure(&self) -> f32 {
+        self.pen.map_or(1.0, |(p, _)| p)
+    }
+
     pub fn brush_for_stroke(&self, pixels_per_point: f32) -> Brush {
         Brush {
             values: self.fg.clone(),
@@ -367,7 +388,10 @@ impl App {
             hardness: self.brush.hardness,
             opacity: self.brush.opacity,
             flow: self.brush.flow,
-            erase: self.tool == Tool::Eraser,
+            erase: self.tool == Tool::Eraser || self.pen.is_some_and(|(_, eraser)| eraser),
+            pressure_size: self.brush.pressure_size,
+            pressure_flow: self.brush.pressure_flow,
+            min_size: self.brush.min_size,
         }
     }
 
@@ -540,8 +564,10 @@ impl App {
                 match self.viewport.begin_stroke(&rs.device, &rs.queue, self.brush_for_stroke(ppp)) {
                     Ok(()) => {
                         let p = to_px(pos);
-                        self.viewport.paint.add_dabs(&[[p.x, p.y]]);
+                        let pressure = self.pressure();
+                        self.viewport.paint.add_dabs_pressure(&[[p.x, p.y, pressure]]);
                         self.last_dab = Some(p);
+                        self.last_pressure = pressure;
                     }
                     Err(msg) => self.status = t(msg).to_owned(),
                 }
@@ -551,13 +577,23 @@ impl App {
             && let (Some(pos), Some(mut last)) = (response.interact_pointer_pos(), self.last_dab)
         {
             let target = to_px(pos);
-            let spacing = (self.brush.size * ppp * 0.12).max(1.0);
+            let (p0, p1) = (self.last_pressure, self.pressure());
+            // Spacing follows the smaller (pressure-scaled) dab so light strokes stay continuous.
+            let size_share = if self.brush.pressure_size { self.brush.min_size + (1.0 - self.brush.min_size) * p0.min(p1) } else { 1.0 };
+            let spacing = (self.brush.size * ppp * 0.12 * size_share).max(1.0);
+            let total = last.distance(target);
             let mut dabs = Vec::new();
+            let mut walked = 0.0;
             while last.distance(target) >= spacing {
                 last += (target - last).normalized() * spacing;
-                dabs.push([last.x, last.y]);
+                walked += spacing;
+                let k = if total > 0.0 { walked / total } else { 1.0 };
+                dabs.push([last.x, last.y, p0 + (p1 - p0) * k]);
             }
-            self.viewport.paint.add_dabs(&dabs);
+            if !dabs.is_empty() {
+                self.last_pressure = p0 + (p1 - p0) * (walked / total.max(1e-6)).min(1.0);
+            }
+            self.viewport.paint.add_dabs_pressure(&dabs);
             self.last_dab = Some(last);
         }
         if self.last_dab.is_some() && !response.dragged_by(egui::PointerButton::Primary) {
@@ -727,7 +763,61 @@ fn dirs_cache() -> PathBuf {
     std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache"))).unwrap_or_else(std::env::temp_dir)
 }
 
+/// Starts the native Wayland tablet reader on eframe's display (None elsewhere).
+#[cfg(target_os = "linux")]
+fn start_tablet(cc: &eframe::CreationContext<'_>) -> Option<s3dp_tablet::wayland::Tablet> {
+    use raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
+    let RawDisplayHandle::Wayland(h) = cc.display_handle().ok()?.as_raw() else { return None };
+    let ctx = cc.egui_ctx.clone();
+    // SAFETY: winit's display lives as long as the event loop; the reader is dropped in
+    // `on_exit`, before eframe tears the loop down.
+    match unsafe { s3dp_tablet::wayland::start(h.display, move || ctx.request_repaint()) } {
+        Ok(t) => Some(t),
+        Err(e) => {
+            log::info!("{e}");
+            None
+        }
+    }
+}
+
 impl eframe::App for App {
+    /// Pen events (the compositor stops emulating the pointer for a bound tablet): injected as
+    /// pointer events; pressure / eraser kept for the brush.
+    #[cfg(target_os = "linux")]
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        use s3dp_tablet::{PenButton, PenEventKind};
+        let Some(tablet) = &self.tablet else { return };
+        let zoom = ctx.zoom_factor().max(1e-3);
+        let modifiers = ctx.input(|i| i.modifiers);
+        for e in tablet.drain() {
+            let pos = egui::pos2(e.pos[0] / zoom, e.pos[1] / zoom);
+            let button = |button, pressed| egui::Event::PointerButton { pos, button, pressed, modifiers };
+            match e.kind {
+                PenEventKind::Enter | PenEventKind::Motion => raw_input.events.push(egui::Event::PointerMoved(pos)),
+                PenEventKind::Down => raw_input.events.push(button(egui::PointerButton::Primary, true)),
+                PenEventKind::Up => raw_input.events.push(button(egui::PointerButton::Primary, false)),
+                // Lower barrel button orbits (middle drag), upper one acts as right click.
+                PenEventKind::Button { button: b, pressed } => {
+                    let b = match b {
+                        PenButton::First => egui::PointerButton::Middle,
+                        _ => egui::PointerButton::Secondary,
+                    };
+                    raw_input.events.push(button(b, pressed));
+                }
+                PenEventKind::Leave => raw_input.events.push(egui::Event::PointerGone),
+            }
+            self.pen = (e.kind != PenEventKind::Leave).then_some((e.pressure, e.eraser));
+        }
+    }
+
+    fn on_exit(&mut self) {
+        // Stop the tablet thread while winit's Wayland display is still connected.
+        #[cfg(target_os = "linux")]
+        {
+            self.tablet = None;
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && self.is_modified() {
