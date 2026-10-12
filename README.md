@@ -3,7 +3,7 @@
 Open-source 3D texture painter focused on stylized / hand-painted texturing.
 Written in Rust with wgpu and egui.
 
-**Status:** early development (pre-release). Builds and runs on Linux; Windows / macOS untested.
+**Status:** early development (pre-release). Built for Linux on Wayland (native, incl. pen tablets); it also starts on X11 through winit, without pen pressure. Windows / macOS untested.
 
 | Lit | Toon |
 |-----|------|
@@ -83,7 +83,7 @@ Icons: [Phosphor](https://phosphoricons.com) via `egui-phosphor` (MIT).
 - **M4** – mask generators (baked maps, height gradient, 3D noise), Warp / Slope Blur / Directional filters, Stylize filter layer, smart layers, Toon viewport ✅
 - **M5** – effect engine, layer tree, wear / stylize effects, export presets ✅
 - **M6** – native Wayland pen pressure ✅
-- Next: X11 / Windows / macOS pen pressure, brush textures and tilt, release builds
+- Next: brush textures and pen tilt, release builds
 
 Known issues: [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
 
