@@ -74,6 +74,12 @@ pub struct App {
     preview_key: Option<(u64, s3dp_render::Preview, [u32; 2])>,
     /// Sample-shape scene of the effect preview (created on first use).
     pub sample: Option<crate::ui_preview::SampleScene>,
+    /// Viewport mode: 3D only, or 3D next to the flat UV texture.
+    pub split_uv: bool,
+    uv_tex: Option<egui::TextureId>,
+    uv_key: Option<(u64, ShadingMode, [u32; 2], usize)>,
+    /// Texture set shown in the UV panel.
+    pub uv_set: usize,
     camera: OrbitCamera,
     pub shading: ShadingMode,
     pub mesh: Mesh,
@@ -134,6 +140,10 @@ impl App {
             preview_tex: None,
             preview_key: None,
             sample: None,
+            split_uv: false,
+            uv_tex: None,
+            uv_key: None,
+            uv_set: 0,
             camera: OrbitCamera::default(),
             shading: ShadingMode::default(),
             mesh: Mesh::default(),
@@ -456,7 +466,7 @@ impl App {
             let b = self.mesh.bounds();
             cam.frame(b.center(), b.radius(), w / h);
             cam.distance *= 0.8;
-            if let Some((view, recreated)) = self.viewport.render_preview(&rs.device, &rs.queue, size, &cam, what) {
+            if let Some((view, recreated)) = self.viewport.render_preview(&rs.device, &rs.queue, 0, size, &cam, what) {
                 let mut renderer = rs.renderer.write();
                 match self.preview_tex {
                     Some(id) if recreated => renderer.update_egui_texture_from_wgpu_texture(&rs.device, view, wgpu::FilterMode::Linear, id),
@@ -473,7 +483,16 @@ impl App {
     }
 
     pub(crate) fn viewport_ui(&mut self, ui: &mut egui::Ui) {
-        let rect = ui.available_rect_before_wrap();
+        let full = ui.available_rect_before_wrap();
+        // "3D + UV": the flat texture as a square on the right, the 3D view in the rest.
+        let mut rect = full;
+        if self.split_uv && full.width() > 200.0 {
+            let side = full.height().min(full.width() * 0.5).floor();
+            rect.max.x = full.max.x - side - 3.0;
+            let uv_rect = egui::Rect::from_min_size(egui::pos2(full.max.x - side, full.center().y - side / 2.0), egui::vec2(side, side));
+            ui.painter().rect_filled(full, 0.0, egui::Color32::from_rgb(9, 9, 11));
+            self.uv_panel(ui, uv_rect);
+        }
         let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
         self.aspect = rect.width() / rect.height().max(1.0);
         if std::mem::take(&mut self.needs_frame) {
@@ -526,11 +545,56 @@ impl App {
         }
     }
 
+    /// Flat UV texture of a texture set, shaded like the viewport (material modes: base color).
+    fn uv_panel(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
+        ui.allocate_rect(rect, egui::Sense::hover());
+        let sets = self.viewport.paint.sets.len();
+        self.uv_set = self.uv_set.min(sets.saturating_sub(1));
+        let ppp = ui.ctx().pixels_per_point();
+        let size = [(rect.width() * ppp).round() as u32, (rect.height() * ppp).round() as u32];
+        let key = (self.viewport.frame_id(), self.shading, size, self.uv_set);
+        if self.uv_key != Some(key) || self.uv_tex.is_none() {
+            let rs = self.render_state.clone();
+            let what = s3dp_render::Preview { mask_of: None, uv: true, set: self.uv_set, shading: Some(self.shading) };
+            if let Some((view, recreated)) = self.viewport.render_preview(&rs.device, &rs.queue, 1, size, &self.camera, what) {
+                let mut renderer = rs.renderer.write();
+                match self.uv_tex {
+                    Some(id) if recreated => renderer.update_egui_texture_from_wgpu_texture(&rs.device, view, wgpu::FilterMode::Linear, id),
+                    Some(_) => {}
+                    None => self.uv_tex = Some(renderer.register_native_texture(&rs.device, view, wgpu::FilterMode::Linear)),
+                }
+                self.uv_key = Some(key);
+            }
+        }
+        if let Some(tex) = self.uv_tex {
+            ui.painter().image(tex, rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+        }
+        ui.painter().rect_stroke(rect, 0.0, egui::Stroke::new(1.0, theme::FIELD_BORDER), egui::StrokeKind::Outside);
+        // Texture set switch when there are several.
+        if sets > 1 {
+            let area = egui::Area::new(egui::Id::new("uv_overlay")).fixed_pos(rect.left_top() + egui::vec2(8.0, 8.0)).order(egui::Order::Middle);
+            area.show(ui.ctx(), |ui| {
+                egui::Frame::new().fill(egui::Color32::from_black_alpha(150)).corner_radius(4).inner_margin(egui::Margin::symmetric(6, 4)).show(ui, |ui| {
+                    let name = self.viewport.paint.sets.get(self.uv_set).map_or(String::new(), |s| s.name.clone());
+                    egui::ComboBox::from_id_salt("uv_set").selected_text(format!("UV · {name}")).show_ui(ui, |ui| {
+                        for i in 0..sets {
+                            let n = self.viewport.paint.sets[i].name.clone();
+                            ui.selectable_value(&mut self.uv_set, i, n);
+                        }
+                    });
+                });
+            });
+        }
+    }
+
     fn viewport_overlay(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
         let area = egui::Area::new(egui::Id::new("viewport_overlay")).fixed_pos(rect.right_top() + egui::vec2(-8.0, 8.0)).pivot(egui::Align2::RIGHT_TOP).order(egui::Order::Middle);
         area.show(ui.ctx(), |ui| {
             egui::Frame::new().fill(egui::Color32::from_black_alpha(150)).corner_radius(4).inner_margin(egui::Margin::symmetric(6, 4)).show(ui, |ui| {
                 ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.split_uv, false, "3D").on_hover_text(t("Model only (U)"));
+                    ui.selectable_value(&mut self.split_uv, true, "3D + UV").on_hover_text(t("Model and its flat texture side by side (U)"));
+                    ui.separator();
                     ui.label(egui::RichText::new(egui_phosphor::regular::CUBE).color(theme::TEXT_DIM));
                     egui::ComboBox::from_id_salt("shading").selected_text(t(self.shading.label())).width(150.0).show_ui(ui, |ui| ui_panels::shading_menu(self, ui));
                 });
@@ -669,7 +733,7 @@ impl App {
         type Action = fn(&mut App);
         let cmd_shift = M::COMMAND | M::SHIFT;
         // More specific shortcuts first: consume_shortcut ignores extra modifiers.
-        let shortcuts: [(S, Action); 14] = [
+        let shortcuts: [(S, Action); 15] = [
             (S::new(cmd_shift, Key::Z), |a| a.viewport.paint.redo()),
             (S::new(M::COMMAND, Key::Y), |a| a.viewport.paint.redo()),
             (S::new(M::COMMAND, Key::Z), |a| a.viewport.paint.undo()),
@@ -693,6 +757,7 @@ impl App {
             }),
             (S::new(M::COMMAND, Key::J), App::duplicate_selected),
             (S::new(M::COMMAND, Key::Q), |a| a.request(PendingAction::Quit)),
+            (S::new(M::NONE, Key::U), |a| a.split_uv = !a.split_uv),
             (S::new(M::NONE, Key::Delete), |a| {
                 let ids = a.selected_layers();
                 a.viewport.paint.delete_nodes(&ids);

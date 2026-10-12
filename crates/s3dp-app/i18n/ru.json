@@ -284,5 +284,9 @@
  "Sphere": "Шар",
  "Cube": "Куб",
  "Cylinder": "Цилиндр",
- "Drag to rotate": "Тяните, чтобы вращать"
+ "Drag to rotate": "Тяните, чтобы вращать",
+ "Model only": "Только модель",
+ "Model and its flat texture side by side": "Модель и её плоская текстура рядом",
+ "Model only (U)": "Только модель (U)",
+ "Model and its flat texture side by side (U)": "Модель и её плоская текстура рядом (U)"
 }

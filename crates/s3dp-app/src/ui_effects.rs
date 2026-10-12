@@ -404,7 +404,7 @@ fn effect_preview(app: &mut App, ui: &mut egui::Ui, node: &Node, effect_id: u64)
             }
         });
         if uv {
-            let what = s3dp_render::Preview { mask_of: on_mask.then_some(node.id), uv, set: 0 };
+            let what = s3dp_render::Preview { mask_of: on_mask.then_some(node.id), uv, set: 0, shading: None };
             app.preview_ui(ui, what);
         } else if let Some(e) = find_effect(node, effect_id).cloned()
             && let Some(def) = registry().get(&e.def)

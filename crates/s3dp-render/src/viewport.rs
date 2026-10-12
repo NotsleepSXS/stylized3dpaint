@@ -112,8 +112,9 @@ pub struct Viewport {
     bind_group: wgpu::BindGroup,
     mesh: Option<GpuMesh>,
     targets: Option<Targets>,
-    /// Small extra view (Properties preview): own targets and camera buffer.
-    preview: Option<PreviewTargets>,
+    /// Extra views (0: Properties preview, 1: the viewport's UV panel): own targets and
+    /// camera buffers each.
+    previews: [Option<PreviewTargets>; 2],
     /// Incremented whenever the main view is redrawn (previews follow it).
     frame_id: u64,
 }
@@ -133,6 +134,8 @@ pub struct Preview {
     /// Flat texture (UV layout of the texture set) instead of the 3D model.
     pub uv: bool,
     pub set: usize,
+    /// Show like this shading mode instead (material modes show base color in UV).
+    pub shading: Option<ShadingMode>,
 }
 
 impl Viewport {
@@ -296,7 +299,7 @@ impl Viewport {
             bind_group,
             mesh: None,
             targets: None,
-            preview: None,
+            previews: [None, None],
             frame_id: 0,
         }
     }
@@ -376,8 +379,8 @@ impl Viewport {
     }
 
     /// RGBA8 pixels of the last preview.
-    pub fn read_preview(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Option<(u32, u32, Vec<u8>)> {
-        let t = &self.preview.as_ref()?.targets;
+    pub fn read_preview(&self, device: &wgpu::Device, queue: &wgpu::Queue, slot: usize) -> Option<(u32, u32, Vec<u8>)> {
+        let t = &self.previews.get(slot)?.as_ref()?.targets;
         let data = crate::gpu::read_texture(device, queue, &t.resolve_tex)?;
         Some((t.size[0], t.size[1], data))
     }
@@ -434,12 +437,13 @@ impl Viewport {
 
     /// Renders a small preview (material or a node's mask, 3D or flat UV) into its own target.
     /// Does not apply dabs or recomposite; returns the view and whether it was recreated.
-    pub fn render_preview(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, size: [u32; 2], camera: &OrbitCamera, what: Preview) -> Option<(&wgpu::TextureView, bool)> {
+    pub fn render_preview(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, slot: usize, size: [u32; 2], camera: &OrbitCamera, what: Preview) -> Option<(&wgpu::TextureView, bool)> {
+        let slot = slot.min(self.previews.len() - 1);
         let mesh = self.mesh.as_ref()?;
         let size = [size[0].max(1), size[1].max(1)];
         let mut recreated = false;
-        if self.preview.as_ref().is_none_or(|p| p.targets.size != size) {
-            let bgl = match self.preview.take() {
+        if self.previews[slot].as_ref().is_none_or(|p| p.targets.size != size) {
+            let bgl = match self.previews[slot].take() {
                 Some(p) => p.bgl,
                 None => device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     label: Some("preview globals"),
@@ -462,16 +466,18 @@ impl Viewport {
                 layout: &self.pipeline.get_bind_group_layout(0),
                 entries: &[wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() }],
             });
-            self.preview = Some(PreviewTargets { targets: make_targets(device, size), globals, bind_group, bgl });
+            self.previews[slot] = Some(PreviewTargets { targets: make_targets(device, size), globals, bind_group, bgl });
             recreated = true;
         }
-        let pv = self.preview.as_ref()?;
+        let pv = self.previews[slot].as_ref()?;
         let aspect = size[0] as f32 / size[1] as f32;
         let view_proj: Mat4 = camera.projection(aspect) * camera.view();
-        let mode = match (what.mask_of, what.uv) {
-            (Some(_), _) => ShadingMode::Mask,
-            (None, true) => ShadingMode::Unlit,
-            (None, false) => ShadingMode::Lit,
+        let mode = match (what.shading, what.mask_of, what.uv) {
+            (Some(ShadingMode::Lit | ShadingMode::Toon), _, true) => ShadingMode::Unlit,
+            (Some(m), _, _) => m,
+            (None, Some(_), _) => ShadingMode::Mask,
+            (None, None, true) => ShadingMode::Unlit,
+            (None, None, false) => ShadingMode::Lit,
         };
         let globals = Globals {
             view_proj: view_proj.to_cols_array_2d(),
@@ -479,7 +485,10 @@ impl Viewport {
             params: [mode.gpu_id() as f32, 8.0, what.uv as u32 as f32, 0.0],
         };
         queue.write_buffer(&pv.globals, 0, bytemuck::bytes_of(&globals));
-        let inspect = what.mask_of.map_or(Inspect::None, Inspect::Mask);
+        let inspect = match what.shading {
+            Some(m) => m.inspect(self.paint.active),
+            None => what.mask_of.map_or(Inspect::None, Inspect::Mask),
+        };
         let sets: Vec<(std::ops::Range<u32>, wgpu::BindGroup)> = self
             .paint
             .sets
@@ -518,7 +527,7 @@ impl Viewport {
             }
         }
         queue.submit([encoder.finish()]);
-        Some((&self.preview.as_ref()?.targets.resolve, recreated))
+        Some((&self.previews[slot].as_ref()?.targets.resolve, recreated))
     }
 
     /// Renders the scene, first applying any queued paint dabs (in the pixel space of the

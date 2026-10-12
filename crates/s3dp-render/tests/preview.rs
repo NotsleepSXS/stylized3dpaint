@@ -31,22 +31,22 @@ fn preview_material_mask_and_uv() {
     let main_before = vp.read_color(&device, &queue).unwrap().2;
 
     // 3D material: a red-ish disc in the middle.
-    vp.render_preview(&device, &queue, [96, 64], &cam, Preview { mask_of: None, uv: false, set: 0 }).unwrap();
-    let (w, h, px) = vp.read_preview(&device, &queue).unwrap();
+    vp.render_preview(&device, &queue, 0, [96, 64], &cam, Preview { mask_of: None, uv: false, set: 0, shading: None }).unwrap();
+    let (w, h, px) = vp.read_preview(&device, &queue, 0).unwrap();
     assert_eq!((w, h), (96, 64));
     let c = &px[((h / 2 * w + w / 2) * 4) as usize..][..4];
     let bg = px[..4].to_vec();
     println!("3D centre {c:?}, coverage {:.2}", coverage(&px, &bg));
     assert!(coverage(&px, &bg) > 0.15 && coverage(&px, &bg) < 0.9);
     // 3D mask (black mask): the sphere shows dark.
-    vp.render_preview(&device, &queue, [96, 64], &cam, Preview { mask_of: Some(fill), uv: false, set: 0 }).unwrap();
-    let mpx = vp.read_preview(&device, &queue).unwrap().2;
+    vp.render_preview(&device, &queue, 0, [96, 64], &cam, Preview { mask_of: Some(fill), uv: false, set: 0, shading: None }).unwrap();
+    let mpx = vp.read_preview(&device, &queue, 0).unwrap().2;
     let m = &mpx[((h / 2 * w + w / 2) * 4) as usize..][..4];
     println!("mask centre {m:?}");
     assert!(m[0] < c[0], "black mask is darker than the material");
     // UV: the sphere's UV layout fills (almost) the whole square.
-    vp.render_preview(&device, &queue, [64, 64], &cam, Preview { mask_of: None, uv: true, set: 0 }).unwrap();
-    let upx = vp.read_preview(&device, &queue).unwrap().2;
+    vp.render_preview(&device, &queue, 0, [64, 64], &cam, Preview { mask_of: None, uv: true, set: 0, shading: None }).unwrap();
+    let upx = vp.read_preview(&device, &queue, 0).unwrap().2;
     println!("uv coverage {:.2}", coverage(&upx, &bg));
     assert!(coverage(&upx, &bg) > 0.8, "flat UV view covers the texture");
     // The main view is untouched.

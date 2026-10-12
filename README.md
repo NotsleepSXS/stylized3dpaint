@@ -40,6 +40,7 @@ Supported model formats: glTF/GLB, FBX, OBJ.
 | New layer / duplicate / delete | Ctrl+Shift+N / Ctrl+J / Del |
 | New / open / save / export | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+E |
 | Bake mesh maps | Ctrl+B |
+| Viewport: 3D / 3D + UV | U |
 | Pen (Wayland) | tip paints with pressure, eraser end erases, lower button orbits, upper button = RMB |
 
 ## Features
