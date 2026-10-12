@@ -299,13 +299,14 @@ fn folders_do_not_change_the_result() {
     s.cam.frame(b.center(), b.radius(), 1.0);
     let sets = s.vp.paint.sets.len();
     assert!(sets >= 2, "test model has several texture sets ({sets})");
-    let chans = [ChannelId::BaseColor, ChannelId::Roughness, ChannelId::Height];
+    let chans = [ChannelId::BaseColor, ChannelId::Roughness, ChannelId::Height, ChannelId::Normal];
     let read = |s: &mut Scene| {
         s.render();
         (0..sets).flat_map(|set| chans.iter().map(move |c| (set, *c))).map(|(set, c)| s.vp.paint.read_final(&s.device, &s.queue, set, c).unwrap().1).collect::<Vec<_>>()
     };
     let check = |label: &str, a: &[Vec<f32>], b: &[Vec<f32>]| {
         for (c, (x, y)) in (0..).flat_map(|set| chans.iter().map(move |c| (set, *c))).zip(a.iter().zip(b)) {
+            assert!(y.iter().all(|v| v.is_finite()), "{label}: {c:?} has NaN / inf");
             let d = max_diff(x, y);
             println!("{label}: {c:?} max diff {d:.5}");
             assert!(d < 2e-3, "{label}: {c:?} changed by {d}");
@@ -355,4 +356,54 @@ fn folders_do_not_change_the_result() {
 
     s.vp.paint.delete_nodes(&[f, layer]);
     assert!(s.vp.paint.doc.find(f).is_none() && s.vp.paint.doc.find(layer).is_none() && s.vp.paint.doc.find(fill).is_some());
+}
+
+/// Plain fills inside a folder: every channel stays perfectly uniform (any texel-to-texel
+/// wobble in Height shows up as bump artifacts in the Lit view).
+#[test]
+fn fills_in_folder_stay_uniform() {
+    let Some(mut s) = Scene::new() else { return };
+    let mut a = ChannelValues::defaults();
+    a.set(ChannelId::BaseColor, [0.6, 0.1, 0.05]);
+    let mut b = ChannelValues::defaults();
+    b.set(ChannelId::BaseColor, [0.2, 0.3, 0.8]);
+    let fa = s.vp.paint.add_node(NodeKind::Fill(a), |_, _| {});
+    let fb = s.vp.paint.add_node(NodeKind::Fill(b), |n, _| n.blending.default.opacity = 0.5);
+    let range = |s: &mut Scene, c: ChannelId| {
+        let v = s.channel(c);
+        let covered: Vec<f32> = v.chunks_exact(4).filter(|p| p[3] > 0.5).map(|p| p[0]).collect();
+        let lo = covered.iter().cloned().fold(f32::MAX, f32::min);
+        let hi = covered.iter().cloned().fold(f32::MIN, f32::max);
+        (lo, hi)
+    };
+    let normal = |s: &mut Scene| {
+        let v = s.channel(ChannelId::Normal);
+        let p = v.chunks_exact(4).find(|p| p[3] > 0.5).map(|p| [p[0], p[1], p[2]]).unwrap();
+        p
+    };
+    for c in [ChannelId::Height, ChannelId::BaseColor, ChannelId::Roughness] {
+        let (lo, hi) = range(&mut s, c);
+        println!("root   {c:?}: {lo:.6} .. {hi:.6}");
+    }
+    println!("root   Normal sample {:?}", normal(&mut s));
+    let lit = |s: &mut Scene, name: &str| {
+        s.vp.render(&s.device, &s.queue, [400, 400], &s.cam, ShadingMode::Lit);
+        let (w, h, f) = s.vp.read_color(&s.device, &s.queue).unwrap();
+        if std::env::var("DUMP").is_ok() {
+            image::save_buffer(std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("lit_{name}.png")), &f, w, h, image::ColorType::Rgba8).unwrap();
+        }
+        f
+    };
+    let lit_root = lit(&mut s, "root");
+    s.vp.paint.group(&[fa, fb]).unwrap();
+    let lit_folder = lit(&mut s, "folder");
+    println!("folder Normal sample {:?}", normal(&mut s));
+    let d = lit_root.iter().zip(&lit_folder).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap_or(0);
+    println!("lit view max diff root vs folder: {d}");
+    assert!(d <= 2, "the Lit view changes when the fills are in a folder ({d})");
+    for c in [ChannelId::Height, ChannelId::BaseColor, ChannelId::Roughness] {
+        let (lo, hi) = range(&mut s, c);
+        println!("folder {c:?}: {lo:.6} .. {hi:.6}");
+        assert!(hi - lo < 1e-6, "{c:?} not uniform in a folder: {lo} .. {hi}");
+    }
 }

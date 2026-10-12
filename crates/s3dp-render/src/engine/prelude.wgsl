@@ -358,8 +358,10 @@ fn set_sat(c: vec3<f32>, s: f32) -> vec3<f32> {
 fn rnm(b: vec3<f32>, s: vec3<f32>) -> vec3<f32> {
     let t = b * vec3<f32>(2.0, 2.0, 2.0) + vec3<f32>(-1.0, -1.0, 0.0);
     let u = s * vec3<f32>(-2.0, -2.0, 2.0) + vec3<f32>(1.0, 1.0, -1.0);
-    let r = normalize(t * dot(t, u) - u * t.z);
-    return r * 0.5 + 0.5;
+    let r = t * dot(t, u) - u * t.z;
+    // Zero base (no normal to rotate): keep `s` instead of normalize(0) = NaN.
+    if (dot(r, r) < 1e-12) { return s; }
+    return normalize(r) * 0.5 + 0.5;
 }
 
 /// Blend modes; ids match `BlendMode::gpu_id`.

@@ -68,7 +68,10 @@ fn hsv_to_rgb(c: vec3<f32>) -> vec3<f32> {
 fn rnm(b: vec3<f32>, s: vec3<f32>) -> vec3<f32> {
     let t = b * vec3<f32>(2.0, 2.0, 2.0) + vec3<f32>(-1.0, -1.0, 0.0);
     let u = s * vec3<f32>(-2.0, -2.0, 2.0) + vec3<f32>(1.0, 1.0, -1.0);
-    return normalize(t * dot(t, u) - u * t.z) * 0.5 + 0.5;
+    let r = t * dot(t, u) - u * t.z;
+    // A zero base (e.g. the transparent start of a folder) has no normal to rotate: keep `s`.
+    if (dot(r, r) < 1e-12) { return s; }
+    return normalize(r) * 0.5 + 0.5;
 }
 
 // Ids match BlendMode::gpu_id.
@@ -114,6 +117,9 @@ fn fs_layer(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     if (L.p.w > 0.5) { a = a * textureLoad(mask_tex, xy, 0).r; }
     a = clamp(a, 0.0, 1.0);
     if (a <= 0.0) { return base; }
+    // Nothing below yet (a folder starts transparent): the layer lands as is. Blend modes are
+    // not evaluated against the empty base (RNM of a zero normal is NaN, and 0 * NaN = NaN).
+    if (base.a <= 0.0) { return vec4<f32>(top.rgb, a); }
     let mode = u32(L.p.x);
     var bl = blend_mode(base.rgb, top.rgb, mode);
     if (L.q.x < 0.5) { bl = vec3<f32>(bl.r); }
