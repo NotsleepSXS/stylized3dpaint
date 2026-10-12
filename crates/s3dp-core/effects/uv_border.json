@@ -1,0 +1,12 @@
+{
+  "id": "uv_border",
+  "name": "UV Border",
+  "name_ru": "Граница UV",
+  "category": "generator",
+  "description": "Distance to the UV island border: white at the border, fading inwards. The distance is a fraction of the texture size, so it looks the same at any resolution.",
+  "description_ru": "Расстояние до края UV-острова: белое у края, затухает внутрь. Расстояние — доля размера текстуры, одинаково на любом разрешении.",
+  "params": [
+    {"id": "distance", "label": "Distance", "label_ru": "Расстояние", "type": "float", "min": 0.001, "max": 0.1, "default": 0.02, "logarithmic": true, "group": "Border", "group_ru": "Граница", "tip": "Fraction of the texture size", "tip_ru": "Доля размера текстуры"},
+    {"id": "contrast", "label": "Contrast", "label_ru": "Контраст", "type": "float", "min": 0, "max": 1, "default": 0, "group": "Border", "group_ru": "Граница"}
+  ]
+}

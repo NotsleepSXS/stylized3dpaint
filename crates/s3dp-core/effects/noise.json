@@ -1,0 +1,14 @@
+{
+  "id": "noise",
+  "name": "Noise",
+  "name_ru": "Шум",
+  "category": "generator",
+  "description": "3D procedural noise evaluated at world positions: seamless across UV islands and independent of the texture resolution.",
+  "description_ru": "Процедурный 3D-шум по мировым координатам: без швов между UV-островами и не зависит от разрешения текстуры.",
+  "params": [
+    {"id": "kind", "label": "Type", "label_ru": "Тип", "type": "enum", "options": [["perlin", "Perlin (fractal)", "Перлин (фрактал)"], ["cellular", "Cellular", "Клеточный"], ["cell_edges", "Cell Edges", "Края ячеек"], ["spots", "Spots", "Пятна"], ["clouds", "Clouds", "Облака"]], "default": 0, "group": "Noise", "group_ru": "Шум"},
+    {"id": "scale", "label": "Scale", "label_ru": "Масштаб", "type": "float", "min": 0.005, "max": 1, "default": 0.15, "logarithmic": true, "group": "Noise", "group_ru": "Шум", "tip": "Feature size as a fraction of the object size", "tip_ru": "Размер деталей в долях размера объекта"},
+    {"id": "octaves", "label": "Octaves", "label_ru": "Октавы", "type": "int", "min": 1, "max": 8, "default": 4, "group": "Noise", "group_ru": "Шум", "tip": "Detail layers (Perlin)", "tip_ru": "Слои детализации (Перлин)"},
+    {"id": "distortion", "label": "Distortion", "label_ru": "Искажение", "type": "float", "min": 0, "max": 1, "default": 0, "group": "Noise", "group_ru": "Шум", "tip": "Warps the noise with another noise", "tip_ru": "Искривляет шум другим шумом"}
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "id": "thickness",
+  "name": "Thickness",
+  "name_ru": "Толщина",
+  "category": "generator",
+  "description": "Thin parts of the model (white = thin) from the baked thickness map: subsurface glow, worn thin edges.",
+  "description_ru": "Тонкие части модели (белое = тонко) по запечённой карте толщины: просвечивание, истончённые края.",
+  "maps": ["thickness"],
+  "params": [
+    {"id": "balance", "label": "Balance", "label_ru": "Баланс", "type": "float", "min": -1, "max": 1, "default": 0, "tip": "Gain: + brightens faint values, - darkens", "tip_ru": "Усиление: + усиливает слабые значения, - ослабляет", "group": "Thickness", "group_ru": "Толщина"},
+    {"id": "contrast", "label": "Contrast", "label_ru": "Контраст", "type": "float", "min": 0, "max": 1, "default": 0.2, "group": "Thickness", "group_ru": "Толщина"}
+  ]
+}

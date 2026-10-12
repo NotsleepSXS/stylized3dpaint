@@ -1,0 +1,22 @@
+{
+  "id": "curvature",
+  "name": "Curvature",
+  "name_ru": "Кривизна",
+  "category": "generator",
+  "description": "Convex edges, concave crevices or both, from the baked curvature / edges / cavity maps. Frequency averages the maps over a wider area of the surface for softer, larger shapes.",
+  "description_ru": "Выпуклые грани, впадины или оба сразу по запечённым картам кривизны / граней / полостей. Частота усредняет карты по большей области поверхности — мягче и крупнее.",
+  "maps": ["curvature", "edges", "cavity"],
+  "params": [
+    {"id": "mode", "label": "Mode", "label_ru": "Режим", "type": "enum", "options": [["convex", "Convex (edges)", "Выпуклости (грани)"], ["concave", "Concave (cavities)", "Вогнутости (полости)"], ["both", "Both (gray = flat)", "Оба (серый = плоско)"]], "default": 0, "group": "Curvature", "group_ru": "Кривизна"},
+    {"id": "frequency", "label": "Frequency", "label_ru": "Частота", "type": "enum", "options": [["sharp", "Sharp", "Резкая"], ["fine", "Fine", "Тонкая"], ["soft", "Soft", "Мягкая"], ["medium", "Medium", "Средняя"], ["large", "Large", "Крупная"], ["big", "Big", "Большая"], ["huge", "Huge", "Огромная"]], "default": 1, "group": "Curvature", "group_ru": "Кривизна", "tip": "Size of the area the maps are averaged over", "tip_ru": "Размер области, по которой усредняются карты"},
+    {"id": "intensity", "label": "Intensity", "label_ru": "Интенсивность", "type": "float", "min": 0, "max": 4, "default": 1.0, "group": "Curvature", "group_ru": "Кривизна"},
+    {"id": "shape", "label": "Mesh Shape", "label_ru": "Форма меша", "type": "float", "min": 0, "max": 1, "default": 0.25, "group": "Curvature", "group_ru": "Кривизна", "tip": "Adds the curvature of the model surface itself (works without a bake)", "tip_ru": "Добавляет кривизну самой поверхности модели (работает и без запекания)"},
+    {"id": "contrast", "label": "Contrast", "label_ru": "Контраст", "type": "float", "min": 0, "max": 1, "default": 0.2, "group": "Curvature", "group_ru": "Кривизна"},
+    {"id": "luminosity", "label": "Luminosity", "label_ru": "Яркость", "type": "float", "min": -1, "max": 1, "default": 0, "group": "Curvature", "group_ru": "Кривизна"}
+  ],
+  "presets": [
+    {"name": "Thin edges", "name_ru": "Тонкие грани", "values": {"mode": 0, "frequency": 0, "intensity": 2.0, "contrast": 0.4}},
+    {"name": "Soft edges", "name_ru": "Мягкие грани", "values": {"mode": 0, "frequency": 3, "intensity": 2.5, "contrast": 0.1}},
+    {"name": "Crevices", "name_ru": "Щели", "values": {"mode": 1, "frequency": 1, "intensity": 2.0, "contrast": 0.3}}
+  ]
+}

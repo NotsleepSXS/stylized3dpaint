@@ -1,0 +1,24 @@
+{
+  "id": "dirt",
+  "name": "Dirt",
+  "name_ru": "Грязь",
+  "category": "wear",
+  "description": "Dirt gathering in crevices, occluded areas and towards the bottom of the object, broken up with 3D noise.",
+  "description_ru": "Грязь в щелях, затенённых местах и ближе к низу объекта, с разбивкой 3D-шумом.",
+  "maps": ["ambient_occlusion", "curvature", "cavity"],
+  "params": [
+    {"id": "level", "label": "Dirt Level", "label_ru": "Количество грязи", "type": "float", "min": 0, "max": 1, "default": 0.5, "group": "Dirt", "group_ru": "Грязь"},
+    {"id": "contrast", "label": "Contrast", "label_ru": "Контраст", "type": "float", "min": 0, "max": 1, "default": 0.3, "group": "Dirt", "group_ru": "Грязь"},
+    {"id": "curvature_mask", "label": "Curvature Masking", "label_ru": "Маска по кривизне", "type": "float", "min": 0, "max": 1, "default": 0.6, "group": "Dirt", "group_ru": "Грязь", "tip": "How much dirt goes into concave crevices", "tip_ru": "Сколько грязи уходит во впадины"},
+    {"id": "ao_mask", "label": "AO Masking", "label_ru": "Маска по AO", "type": "float", "min": 0, "max": 1, "default": 0.8, "group": "Dirt", "group_ru": "Грязь", "tip": "How much dirt goes into occluded areas", "tip_ru": "Сколько грязи уходит в затенённые места"},
+    {"id": "top_down", "label": "Top-Down Gradient", "label_ru": "Градиент сверху вниз", "type": "float", "min": 0, "max": 1, "default": 0.5, "group": "Dirt", "group_ru": "Грязь", "tip": "More dirt near the bottom of the object", "tip_ru": "Больше грязи у низа объекта"},
+    {"id": "breakup", "label": "Breakup", "label_ru": "Разбивка", "type": "float", "min": 0, "max": 1, "default": 0.35, "group": "Breakup", "group_ru": "Разбивка"},
+    {"id": "breakup_scale", "label": "Breakup Scale", "label_ru": "Масштаб разбивки", "type": "float", "min": 0.005, "max": 0.5, "default": 0.06, "logarithmic": true, "group": "Breakup", "group_ru": "Разбивка"}
+  ],
+  "presets": [
+    {"name": "Light", "name_ru": "Слабая", "values": {"level": 0.3, "contrast": 0.3}},
+    {"name": "Medium", "name_ru": "Средняя", "values": {"level": 0.5, "contrast": 0.3}},
+    {"name": "Strong", "name_ru": "Сильная", "values": {"level": 0.75, "contrast": 0.2, "top_down": 0.8}},
+    {"name": "Stylized", "name_ru": "Стилизованная", "values": {"level": 0.5, "contrast": 0.8, "breakup": 0.15}}
+  ]
+}

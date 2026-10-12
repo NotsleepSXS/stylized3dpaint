@@ -1,0 +1,17 @@
+{
+  "id": "leaks",
+  "name": "Leaks",
+  "name_ru": "Подтёки",
+  "category": "wear",
+  "description": "Streaks running down from edges, ledges or an anchored mask, following the surface. Columns come from 3D noise, so there are no UV seams.",
+  "description_ru": "Подтёки, стекающие вниз от граней, уступов или маски-якоря по поверхности. Полосы из 3D-шума — без швов UV.",
+  "maps": ["curvature", "edges"],
+  "params": [
+    {"id": "source", "label": "Source", "label_ru": "Источник", "type": "enum", "options": [["edges", "Edges (curvature)", "Грани (кривизна)"], ["ledges", "Upward surfaces", "Верхние поверхности"], ["anchor", "Anchor", "Якорь"]], "default": 1, "group": "Leaks", "group_ru": "Подтёки"},
+    {"id": "anchor", "label": "Anchor", "label_ru": "Якорь", "type": "anchor", "group": "Leaks", "group_ru": "Подтёки"},
+    {"id": "length", "label": "Length", "label_ru": "Длина", "type": "float", "min": 0.01, "max": 1, "default": 0.25, "group": "Leaks", "group_ru": "Подтёки", "tip": "Fraction of the object size", "tip_ru": "В долях размера объекта"},
+    {"id": "amount", "label": "Amount", "label_ru": "Количество", "type": "float", "min": 0, "max": 1, "default": 0.5, "group": "Leaks", "group_ru": "Подтёки"},
+    {"id": "width", "label": "Width", "label_ru": "Ширина", "type": "float", "min": 0.002, "max": 0.2, "default": 0.02, "logarithmic": true, "group": "Leaks", "group_ru": "Подтёки", "tip": "Streak width as a fraction of the object size", "tip_ru": "Ширина полос в долях размера объекта"},
+    {"id": "randomness", "label": "Randomness", "label_ru": "Случайность", "type": "float", "min": 0, "max": 1, "default": 0.6, "group": "Leaks", "group_ru": "Подтёки", "tip": "Varies the length per streak", "tip_ru": "Разброс длины полос"}
+  ]
+}

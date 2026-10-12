@@ -1,0 +1,416 @@
+{
+  "id": "mask_editor",
+  "name": "Mask Editor",
+  "name_ru": "Редактор маски",
+  "category": "generator",
+  "description": "Combines AO, curvature, height, facing direction, thickness and noise into one mask, each with its own opacity and blend mode (applied in this order).",
+  "description_ru": "Собирает маску из AO, кривизны, высоты, направления поверхности, толщины и шума — у каждого своя непрозрачность и режим смешивания (в этом порядке).",
+  "maps": [
+    "ambient_occlusion",
+    "curvature",
+    "edges",
+    "thickness"
+  ],
+  "params": [
+    {
+      "id": "ao_opacity",
+      "label": "Opacity",
+      "label_ru": "Непрозрачность",
+      "type": "float",
+      "min": 0,
+      "max": 1,
+      "default": 0.0,
+      "group": "AO",
+      "group_ru": "AO (затенение)"
+    },
+    {
+      "id": "ao_blend",
+      "label": "Blend Mode",
+      "label_ru": "Режим смешивания",
+      "type": "enum",
+      "options": [
+        [
+          "add",
+          "Add",
+          "Сложение"
+        ],
+        [
+          "multiply",
+          "Multiply",
+          "Умножение"
+        ],
+        [
+          "subtract",
+          "Subtract",
+          "Вычитание"
+        ],
+        [
+          "max",
+          "Max (Lighten)",
+          "Максимум (светлее)"
+        ],
+        [
+          "min",
+          "Min (Darken)",
+          "Минимум (темнее)"
+        ],
+        [
+          "overlay",
+          "Overlay",
+          "Перекрытие"
+        ]
+      ],
+      "default": 0,
+      "group": "AO",
+      "group_ru": "AO (затенение)"
+    },
+    {
+      "id": "ao_invert",
+      "label": "Invert",
+      "label_ru": "Инвертировать",
+      "type": "bool",
+      "default": false,
+      "group": "AO",
+      "group_ru": "AO (затенение)"
+    },
+    {
+      "id": "curv_opacity",
+      "label": "Opacity",
+      "label_ru": "Непрозрачность",
+      "type": "float",
+      "min": 0,
+      "max": 1,
+      "default": 1.0,
+      "group": "Curvature",
+      "group_ru": "Кривизна"
+    },
+    {
+      "id": "curv_blend",
+      "label": "Blend Mode",
+      "label_ru": "Режим смешивания",
+      "type": "enum",
+      "options": [
+        [
+          "add",
+          "Add",
+          "Сложение"
+        ],
+        [
+          "multiply",
+          "Multiply",
+          "Умножение"
+        ],
+        [
+          "subtract",
+          "Subtract",
+          "Вычитание"
+        ],
+        [
+          "max",
+          "Max (Lighten)",
+          "Максимум (светлее)"
+        ],
+        [
+          "min",
+          "Min (Darken)",
+          "Минимум (темнее)"
+        ],
+        [
+          "overlay",
+          "Overlay",
+          "Перекрытие"
+        ]
+      ],
+      "default": 3,
+      "group": "Curvature",
+      "group_ru": "Кривизна"
+    },
+    {
+      "id": "curv_invert",
+      "label": "Invert",
+      "label_ru": "Инвертировать",
+      "type": "bool",
+      "default": false,
+      "group": "Curvature",
+      "group_ru": "Кривизна"
+    },
+    {
+      "id": "pos_opacity",
+      "label": "Opacity",
+      "label_ru": "Непрозрачность",
+      "type": "float",
+      "min": 0,
+      "max": 1,
+      "default": 1.0,
+      "group": "Position (Y gradient)",
+      "group_ru": "Позиция (градиент Y)"
+    },
+    {
+      "id": "pos_blend",
+      "label": "Blend Mode",
+      "label_ru": "Режим смешивания",
+      "type": "enum",
+      "options": [
+        [
+          "add",
+          "Add",
+          "Сложение"
+        ],
+        [
+          "multiply",
+          "Multiply",
+          "Умножение"
+        ],
+        [
+          "subtract",
+          "Subtract",
+          "Вычитание"
+        ],
+        [
+          "max",
+          "Max (Lighten)",
+          "Максимум (светлее)"
+        ],
+        [
+          "min",
+          "Min (Darken)",
+          "Минимум (темнее)"
+        ],
+        [
+          "overlay",
+          "Overlay",
+          "Перекрытие"
+        ]
+      ],
+      "default": 0,
+      "group": "Position (Y gradient)",
+      "group_ru": "Позиция (градиент Y)"
+    },
+    {
+      "id": "pos_invert",
+      "label": "Invert",
+      "label_ru": "Инвертировать",
+      "type": "bool",
+      "default": false,
+      "group": "Position (Y gradient)",
+      "group_ru": "Позиция (градиент Y)"
+    },
+    {
+      "id": "pos_contrast",
+      "label": "Contrast",
+      "label_ru": "Контраст",
+      "type": "float",
+      "min": 0,
+      "max": 1,
+      "default": 0.3,
+      "group": "Position (Y gradient)",
+      "group_ru": "Позиция (градиент Y)"
+    },
+    {
+      "id": "wsn_opacity",
+      "label": "Opacity",
+      "label_ru": "Непрозрачность",
+      "type": "float",
+      "min": 0,
+      "max": 1,
+      "default": 0.0,
+      "group": "World Space Normal (up)",
+      "group_ru": "Нормаль в мире (вверх)"
+    },
+    {
+      "id": "wsn_blend",
+      "label": "Blend Mode",
+      "label_ru": "Режим смешивания",
+      "type": "enum",
+      "options": [
+        [
+          "add",
+          "Add",
+          "Сложение"
+        ],
+        [
+          "multiply",
+          "Multiply",
+          "Умножение"
+        ],
+        [
+          "subtract",
+          "Subtract",
+          "Вычитание"
+        ],
+        [
+          "max",
+          "Max (Lighten)",
+          "Максимум (светлее)"
+        ],
+        [
+          "min",
+          "Min (Darken)",
+          "Минимум (темнее)"
+        ],
+        [
+          "overlay",
+          "Overlay",
+          "Перекрытие"
+        ]
+      ],
+      "default": 1,
+      "group": "World Space Normal (up)",
+      "group_ru": "Нормаль в мире (вверх)"
+    },
+    {
+      "id": "wsn_invert",
+      "label": "Invert",
+      "label_ru": "Инвертировать",
+      "type": "bool",
+      "default": false,
+      "group": "World Space Normal (up)",
+      "group_ru": "Нормаль в мире (вверх)"
+    },
+    {
+      "id": "wsn_angle",
+      "label": "Angle Width",
+      "label_ru": "Ширина угла",
+      "type": "float",
+      "min": 0,
+      "max": 180,
+      "default": 60,
+      "group": "World Space Normal (up)",
+      "group_ru": "Нормаль в мире (вверх)"
+    },
+    {
+      "id": "thick_opacity",
+      "label": "Opacity",
+      "label_ru": "Непрозрачность",
+      "type": "float",
+      "min": 0,
+      "max": 1,
+      "default": 0.0,
+      "group": "Thickness",
+      "group_ru": "Толщина"
+    },
+    {
+      "id": "thick_blend",
+      "label": "Blend Mode",
+      "label_ru": "Режим смешивания",
+      "type": "enum",
+      "options": [
+        [
+          "add",
+          "Add",
+          "Сложение"
+        ],
+        [
+          "multiply",
+          "Multiply",
+          "Умножение"
+        ],
+        [
+          "subtract",
+          "Subtract",
+          "Вычитание"
+        ],
+        [
+          "max",
+          "Max (Lighten)",
+          "Максимум (светлее)"
+        ],
+        [
+          "min",
+          "Min (Darken)",
+          "Минимум (темнее)"
+        ],
+        [
+          "overlay",
+          "Overlay",
+          "Перекрытие"
+        ]
+      ],
+      "default": 0,
+      "group": "Thickness",
+      "group_ru": "Толщина"
+    },
+    {
+      "id": "thick_invert",
+      "label": "Invert",
+      "label_ru": "Инвертировать",
+      "type": "bool",
+      "default": false,
+      "group": "Thickness",
+      "group_ru": "Толщина"
+    },
+    {
+      "id": "noise_opacity",
+      "label": "Opacity",
+      "label_ru": "Непрозрачность",
+      "type": "float",
+      "min": 0,
+      "max": 1,
+      "default": 0.5,
+      "group": "Noise",
+      "group_ru": "Шум"
+    },
+    {
+      "id": "noise_blend",
+      "label": "Blend Mode",
+      "label_ru": "Режим смешивания",
+      "type": "enum",
+      "options": [
+        [
+          "add",
+          "Add",
+          "Сложение"
+        ],
+        [
+          "multiply",
+          "Multiply",
+          "Умножение"
+        ],
+        [
+          "subtract",
+          "Subtract",
+          "Вычитание"
+        ],
+        [
+          "max",
+          "Max (Lighten)",
+          "Максимум (светлее)"
+        ],
+        [
+          "min",
+          "Min (Darken)",
+          "Минимум (темнее)"
+        ],
+        [
+          "overlay",
+          "Overlay",
+          "Перекрытие"
+        ]
+      ],
+      "default": 5,
+      "group": "Noise",
+      "group_ru": "Шум"
+    },
+    {
+      "id": "noise_invert",
+      "label": "Invert",
+      "label_ru": "Инвертировать",
+      "type": "bool",
+      "default": false,
+      "group": "Noise",
+      "group_ru": "Шум"
+    },
+    {
+      "id": "noise_scale",
+      "label": "Scale",
+      "label_ru": "Масштаб",
+      "type": "float",
+      "min": 0.005,
+      "max": 1,
+      "default": 0.1,
+      "logarithmic": true,
+      "group": "Noise",
+      "group_ru": "Шум"
+    }
+  ]
+}

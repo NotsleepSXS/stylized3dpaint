@@ -1,0 +1,16 @@
+{
+  "id": "light",
+  "name": "Light",
+  "name_ru": "Свет",
+  "category": "generator",
+  "description": "Fake directional light: bright on the lit side, dark on the shadow side, with an optional highlight. Great for hand-painted shading.",
+  "description_ru": "Имитация направленного света: светлая освещённая сторона, тёмная теневая и блик. Для рисованного затенения.",
+  "params": [
+    {"id": "h_angle", "label": "Horizontal Angle", "label_ru": "Угол по горизонтали", "type": "float", "min": 0, "max": 360, "default": 45, "group": "Light", "group_ru": "Свет", "tip": "Degrees around the vertical axis", "tip_ru": "Градусы вокруг вертикальной оси"},
+    {"id": "v_angle", "label": "Vertical Angle", "label_ru": "Угол по вертикали", "type": "float", "min": -90, "max": 90, "default": 45, "group": "Light", "group_ru": "Свет", "tip": "Elevation in degrees (90 = from above)", "tip_ru": "Высота в градусах (90 = сверху)"},
+    {"id": "attenuation", "label": "Light Attenuation", "label_ru": "Затухание света", "type": "float", "min": 0, "max": 1, "default": 0.4, "group": "Light", "group_ru": "Свет", "tip": "0 = soft wrap-around light, 1 = hard terminator", "tip_ru": "0 = мягкий обволакивающий свет, 1 = резкая граница тени"},
+    {"id": "glossiness", "label": "Highlight Glossiness", "label_ru": "Глянцевость блика", "type": "float", "min": 0, "max": 1, "default": 0.5, "group": "Highlight", "group_ru": "Блик"},
+    {"id": "highlight", "label": "Highlight Level", "label_ru": "Сила блика", "type": "float", "min": 0, "max": 1, "default": 0.3, "group": "Highlight", "group_ru": "Блик"},
+    {"id": "occlusion", "label": "Occlusion", "label_ru": "Затенение AO", "type": "float", "min": 0, "max": 1, "default": 0.0, "group": "Light", "group_ru": "Свет", "tip": "Darkens with the baked AO", "tip_ru": "Затемняет по запечённой AO"}
+  ]
+}

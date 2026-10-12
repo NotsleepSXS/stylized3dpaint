@@ -1,0 +1,15 @@
+{
+  "id": "ambient_occlusion",
+  "name": "Ambient Occlusion",
+  "name_ru": "Затенение (AO)",
+  "category": "generator",
+  "description": "Occluded areas from the baked AO map (white = occluded). Spread widens the shadows along the surface.",
+  "description_ru": "Затенённые места по запечённой карте AO (белое = затенено). Растекание расширяет тени вдоль поверхности.",
+  "maps": ["ambient_occlusion"],
+  "params": [
+    {"id": "balance", "label": "Balance", "label_ru": "Баланс", "type": "float", "min": -1, "max": 1, "default": 0.33, "tip": "Gain: + brightens faint values, - darkens", "tip_ru": "Усиление: + усиливает слабые значения, - ослабляет", "group": "Occlusion", "group_ru": "Затенение"},
+    {"id": "contrast", "label": "Contrast", "label_ru": "Контраст", "type": "float", "min": 0, "max": 1, "default": 0.2, "group": "Occlusion", "group_ru": "Затенение"},
+    {"id": "spread", "label": "Spread", "label_ru": "Растекание", "type": "float", "min": 0, "max": 0.2, "default": 0.01, "group": "Occlusion", "group_ru": "Затенение", "tip": "Widening radius as a fraction of the object size", "tip_ru": "Радиус расширения в долях размера объекта"},
+    {"id": "invert", "label": "Invert (white = open)", "label_ru": "Инвертировать (белое = открыто)", "type": "bool", "default": false, "group": "Occlusion", "group_ru": "Затенение"}
+  ]
+}

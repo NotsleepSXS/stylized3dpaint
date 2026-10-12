@@ -1,0 +1,17 @@
+{
+  "id": "world_space_normal",
+  "name": "World Space Normal",
+  "name_ru": "Нормаль в мире",
+  "category": "generator",
+  "description": "Surfaces facing a direction (up by default): dust, snow, moss on tops.",
+  "description_ru": "Поверхности, обращённые в заданную сторону (по умолчанию вверх): пыль, снег, мох сверху.",
+  "params": [
+    {"id": "direction", "label": "Direction", "label_ru": "Направление", "type": "direction", "default": [0, 1, 0], "group": "Direction", "group_ru": "Направление"},
+    {"id": "angle", "label": "Angle Width", "label_ru": "Ширина угла", "type": "float", "min": 0, "max": 180, "default": 50, "group": "Direction", "group_ru": "Направление", "tip": "Degrees from the direction that are still covered", "tip_ru": "Отклонение в градусах, которое ещё покрывается"},
+    {"id": "falloff", "label": "Falloff", "label_ru": "Спад", "type": "float", "min": 0, "max": 90, "default": 30, "group": "Direction", "group_ru": "Направление", "tip": "Width of the transition in degrees", "tip_ru": "Ширина перехода в градусах"}
+  ],
+  "presets": [
+    {"name": "Snow", "name_ru": "Снег", "values": {"angle": 40, "falloff": 10}},
+    {"name": "Moss", "name_ru": "Мох", "values": {"angle": 70, "falloff": 40}}
+  ]
+}

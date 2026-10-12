@@ -1,0 +1,20 @@
+{
+  "id": "dust",
+  "name": "Dust",
+  "name_ru": "Пыль",
+  "category": "wear",
+  "description": "Dust settled on upward-facing surfaces, a bit more in occluded corners, broken up with 3D noise.",
+  "description_ru": "Пыль на поверхностях, обращённых вверх, чуть больше в затенённых углах, с разбивкой 3D-шумом.",
+  "maps": ["ambient_occlusion"],
+  "params": [
+    {"id": "amount", "label": "Amount", "label_ru": "Количество", "type": "float", "min": 0, "max": 1, "default": 0.6, "group": "Dust", "group_ru": "Пыль"},
+    {"id": "angle", "label": "Angle", "label_ru": "Угол", "type": "float", "min": 0, "max": 180, "default": 60, "group": "Dust", "group_ru": "Пыль", "tip": "How far from straight up (degrees) dust still settles", "tip_ru": "Насколько (в градусах) поверхность может отклоняться от горизонтали"},
+    {"id": "ao_mask", "label": "AO Masking", "label_ru": "Маска по AO", "type": "float", "min": 0, "max": 1, "default": 0.3, "group": "Dust", "group_ru": "Пыль", "tip": "More dust in occluded corners", "tip_ru": "Больше пыли в затенённых углах"},
+    {"id": "noise_scale", "label": "Grunge Scale", "label_ru": "Масштаб шума", "type": "float", "min": 0.005, "max": 0.5, "default": 0.05, "logarithmic": true, "group": "Dust", "group_ru": "Пыль"}
+  ],
+  "presets": [
+    {"name": "Light", "name_ru": "Слабая", "values": {"amount": 0.35}},
+    {"name": "Medium", "name_ru": "Средняя", "values": {"amount": 0.6}},
+    {"name": "Strong", "name_ru": "Сильная", "values": {"amount": 0.85, "angle": 80}}
+  ]
+}
