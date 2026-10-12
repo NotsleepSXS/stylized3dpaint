@@ -277,8 +277,14 @@ pub struct Painter {
     pub scale: MeshScale,
     /// Throttle heavy recomposites to ~10/s while editing.
     pub throttle: bool,
-    last_heavy: Option<std::time::Instant>,
-    last_cost: std::time::Duration,
+    /// Set while the GPU still runs the last submitted recomposite (cleared by a
+    /// `on_submitted_work_done` callback); recomposites wait instead of queueing up behind it.
+    gpu_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    busy_since: Option<std::time::Instant>,
+    /// A recomposite was encoded this frame (see `take_submitted_recompose`).
+    recompose_encoded: bool,
+    /// A recomposite was skipped because the GPU was busy.
+    deferred: bool,
     changed: bool,
 }
 
@@ -391,8 +397,10 @@ impl Painter {
             baked_revision: 0,
             scale: MeshScale::default(),
             throttle: true,
-            last_heavy: None,
-            last_cost: std::time::Duration::ZERO,
+            gpu_busy: Default::default(),
+            busy_since: None,
+            recompose_encoded: false,
+            deferred: false,
             changed: true,
         }
     }
@@ -570,9 +578,20 @@ impl Painter {
         std::mem::take(&mut self.changed)
     }
 
-    /// True while a throttled recomposite is pending.
+    /// True while a recomposite is pending (deferred behind GPU work or never composed).
     pub fn wants_repaint(&self) -> bool {
-        (0..self.sets.len()).any(|si| self.doc.channels.iter().any(|c| !self.composed.contains_key(&(si, c))))
+        self.deferred || (0..self.sets.len()).any(|si| self.doc.channels.iter().any(|c| !self.composed.contains_key(&(si, c))))
+    }
+
+    /// After submitting a frame that encoded a recomposite: the flag to clear when the GPU has
+    /// finished it (`queue.on_submitted_work_done`).
+    pub fn take_submitted_recompose(&mut self) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+        if !std::mem::take(&mut self.recompose_encoded) {
+            return None;
+        }
+        self.gpu_busy.store(true, std::sync::atomic::Ordering::Release);
+        self.busy_since = Some(std::time::Instant::now());
+        Some(self.gpu_busy.clone())
     }
 
     // ============================================================== undo
@@ -1167,16 +1186,17 @@ impl Painter {
         if todo.is_empty() {
             return;
         }
-        // Expensive stacks (effects) recompose at most ~10x per second while editing.
-        if self.throttle
-            && self.stroke.is_none()
-            && self.last_cost > std::time::Duration::from_millis(25)
-            && self.last_heavy.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(100))
-        {
-            return;
+        // Don't queue a recomposite behind one the GPU is still running (heavy effect stacks
+        // take 20-30 ms at 2K): input would lag further and further behind. Dabs keep being
+        // applied every frame; the result shows as fast as the GPU allows.
+        if self.throttle && self.gpu_busy.load(std::sync::atomic::Ordering::Acquire) {
+            // Safety net in case a completion callback never arrives.
+            if self.busy_since.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(500)) {
+                self.deferred = true;
+                return;
+            }
         }
-        let started = std::time::Instant::now();
-        self.last_heavy = Some(started);
+        self.deferred = false;
         let nodes = self.doc.nodes.clone();
         // Masks first: they are channel independent and can be anchors for content.
         for si in 0..self.sets.len() {
@@ -1196,7 +1216,7 @@ impl Painter {
             self.composed.insert((si, c), key);
         }
         self.rebuild_view_groups(device);
-        self.last_cost = started.elapsed();
+        self.recompose_encoded = true;
         self.changed = true;
     }
 

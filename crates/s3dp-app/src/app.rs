@@ -851,7 +851,8 @@ impl eframe::App for App {
         if self.viewport.bake_progress().is_some() {
             ctx.request_repaint();
         } else if self.viewport.paint.wants_repaint() {
-            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+            // Deferred behind GPU work: check again soon (painting should feel live).
+            ctx.request_repaint_after(std::time::Duration::from_millis(8));
         }
         self.confirm_dialog(ui);
     }

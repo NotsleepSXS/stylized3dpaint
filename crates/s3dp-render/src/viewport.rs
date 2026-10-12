@@ -478,7 +478,8 @@ impl Viewport {
         let changed = self.paint.take_changed();
         if !recreated && !changed && self.shown.as_ref() == Some(&shown) {
             queue.submit([encoder.finish()]);
-            return (&targets.resolve, false);
+            self.track_recompose(queue);
+            return (&self.targets.as_ref().unwrap().resolve, false);
         }
         self.shown = Some(shown);
         {
@@ -537,7 +538,15 @@ impl Viewport {
             pass.draw_indexed(0..mesh.index_count, 0, 0..1);
         }
         queue.submit([encoder.finish()]);
+        self.track_recompose(queue);
         self.last_frame = Some((camera.clone(), size));
-        (&targets.resolve, recreated)
+        (&self.targets.as_ref().unwrap().resolve, recreated)
+    }
+
+    /// Clears the painter's GPU-busy flag once a submitted recomposite has finished.
+    fn track_recompose(&mut self, queue: &wgpu::Queue) {
+        if let Some(busy) = self.paint.take_submitted_recompose() {
+            queue.on_submitted_work_done(move || busy.store(false, std::sync::atomic::Ordering::Release));
+        }
     }
 }
