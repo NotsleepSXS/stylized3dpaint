@@ -211,6 +211,8 @@ pub fn effects_editor(app: &mut App, ui: &mut egui::Ui) {
     let mut remove = None;
     let mut swap = None;
     let count = effects.len();
+    // The add button comes first so it is always within reach.
+    let added = add_effect_menu(ui);
     if count == 0 {
         ui.label(
             RichText::new("Generators and filters shape this layer's mask. Bake mesh maps for Edges / Cavity / AO / Sky.")
@@ -265,7 +267,7 @@ pub fn effects_editor(app: &mut App, ui: &mut egui::Ui) {
         effects.swap(a, b);
         edit.structural();
     }
-    if let Some(kind) = add_effect_menu(ui) {
+    if let Some(kind) = added {
         effects.push(MaskEffect::new(kind));
         edit.structural();
     }

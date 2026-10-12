@@ -75,11 +75,12 @@ pub fn layers_panel(app: &mut App, ui: &mut egui::Ui) {
     egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 6)).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 5.0;
         blend_and_opacity(app, ui);
+        // Layer buttons sit at the top, close to the rest of the panel.
+        toolbar(app, ui, &mut actions);
     });
     ui.add(egui::Separator::default().spacing(0.0));
 
-    let footer_h = 30.0;
-    let list_h = (ui.available_height() - footer_h).max(60.0);
+    let list_h = ui.available_height().max(60.0);
     egui::ScrollArea::vertical().max_height(list_h).auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         let count = app.viewport.paint.layers.len();
@@ -91,9 +92,6 @@ pub fn layers_panel(app: &mut App, ui: &mut egui::Ui) {
         }
         drag_and_drop(app, ui, &row_rects, &mut actions);
     });
-
-    ui.add(egui::Separator::default().spacing(0.0));
-    footer(app, ui, &mut actions);
     apply(app, actions);
 }
 
@@ -343,40 +341,39 @@ fn drag_and_drop(app: &mut App, ui: &mut egui::Ui, rows: &[(usize, egui::Rect)],
     }
 }
 
-fn footer(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
+fn toolbar(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     let active = app.viewport.paint.active;
     let has_mask = app.viewport.paint.active_layer().is_some_and(|l| l.has_mask);
+    let button = |ui: &mut egui::Ui, glyph: &str, tip: &str| {
+        ui.add(egui::Button::new(RichText::new(glyph).size(15.0)).min_size(egui::vec2(28.0, 24.0))).on_hover_text(tip)
+    };
     ui.horizontal(|ui| {
-        ui.add_space(4.0);
+        ui.spacing_mut().item_spacing.x = 3.0;
+        if button(ui, icon::PLUS, "New paint layer (Ctrl+Shift+N)").clicked() {
+            app.viewport.paint.add_layer(LayerKind::Paint);
+        }
+        if button(ui, icon::PAINT_BUCKET, "New fill layer (uses the foreground material)").clicked() {
+            let fill = fill_from(app);
+            app.viewport.paint.add_layer(LayerKind::Fill(fill));
+        }
+        ui.menu_button(RichText::new(icon::MAGIC_WAND).size(15.0), |ui| crate::ui_effects::presets_menu(app, ui))
+            .response
+            .on_hover_text("Smart layers and the Stylize filter");
+        let mask_tip = if has_mask { "Delete mask" } else { "Add mask (Shift+click: hide all)" };
+        if button(ui, icon::SQUARE_HALF, mask_tip).clicked() {
+            if has_mask {
+                actions.push(Action::DeleteMask(active));
+            } else {
+                let hide = ui.input(|i| i.modifiers.shift);
+                actions.push(Action::AddMask(active, !hide));
+            }
+        }
+        if button(ui, icon::COPY, "Duplicate layer (Ctrl+J)").clicked() {
+            actions.push(Action::Duplicate(active));
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let small = |ui: &mut egui::Ui, glyph: &str, tip: &str| {
-                ui.add(egui::Button::new(RichText::new(glyph).size(15.0)).frame(false).min_size(egui::vec2(26.0, 26.0)))
-                    .on_hover_text(tip)
-            };
-            if small(ui, icon::TRASH, "Delete layer (Del)").clicked() {
+            if button(ui, icon::TRASH, "Delete layer (Del)").clicked() {
                 actions.push(Action::Delete(active));
-            }
-            if small(ui, icon::PLUS, "New paint layer (Ctrl+Shift+N)").clicked() {
-                app.viewport.paint.add_layer(LayerKind::Paint);
-            }
-            ui.menu_button(RichText::new(icon::MAGIC_WAND).size(15.0), |ui| crate::ui_effects::presets_menu(app, ui))
-                .response
-                .on_hover_text("Smart layers and the Stylize filter");
-            if small(ui, icon::PAINT_BUCKET, "New fill layer (uses the foreground material)").clicked() {
-                let fill = fill_from(app);
-                app.viewport.paint.add_layer(LayerKind::Fill(fill));
-            }
-            if small(ui, icon::COPY, "Duplicate layer (Ctrl+J)").clicked() {
-                actions.push(Action::Duplicate(active));
-            }
-            let mask_tip = if has_mask { "Delete mask" } else { "Add mask (Shift+click: hide all)" };
-            if small(ui, icon::SQUARE_HALF, mask_tip).clicked() {
-                if has_mask {
-                    actions.push(Action::DeleteMask(active));
-                } else {
-                    let hide = ui.input(|i| i.modifiers.shift);
-                    actions.push(Action::AddMask(active, !hide));
-                }
             }
         });
     });
