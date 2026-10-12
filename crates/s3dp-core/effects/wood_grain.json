@@ -1,0 +1,28 @@
+{
+  "id": "wood_grain",
+  "name": "Wood Grain",
+  "name_ru": "Древесные волокна",
+  "category": "wear",
+  "description": "Growth rings and pores around a world axis (Grain Direction), warped by 3D noise. Mask = dark latewood; on layer content: light/dark wood color, roughness variation, height grooves.",
+  "description_ru": "Годичные кольца и поры вокруг мировой оси (направление волокон), искажённые 3D-шумом. Маска — тёмные поздние слои; на содержимом слоя: светлый/тёмный цвет дерева, разброс шероховатости, бороздки по высоте.",
+  "content_output": "value",
+  "params": [
+    {"id": "grain_dir", "label": "Grain Direction", "label_ru": "Направление волокон", "type": "direction", "default": [0, 1, 0], "group": "Grain", "group_ru": "Волокна"},
+    {"id": "ring_spacing", "label": "Ring Spacing", "label_ru": "Шаг колец", "type": "float", "min": 0.003, "max": 0.2, "default": 0.03, "logarithmic": true, "group": "Grain", "group_ru": "Волокна", "tip": "Fraction of the model size", "tip_ru": "Доля размера модели"},
+    {"id": "distortion", "label": "Distortion", "label_ru": "Искажение", "type": "float", "min": 0, "max": 1, "default": 0.4, "group": "Grain", "group_ru": "Волокна"},
+    {"id": "ring_sharpness", "label": "Ring Sharpness", "label_ru": "Резкость колец", "type": "float", "min": 0, "max": 1, "default": 0.5, "group": "Grain", "group_ru": "Волокна"},
+    {"id": "pores", "label": "Pores", "label_ru": "Поры", "type": "float", "min": 0, "max": 1, "default": 0.4, "group": "Grain", "group_ru": "Волокна"},
+    {"id": "intensity", "label": "Intensity", "label_ru": "Интенсивность", "type": "float", "min": 0, "max": 2, "default": 1.0, "group": "Grain", "group_ru": "Волокна"},
+    {"id": "hand_painted", "label": "Hand-painted Mode", "label_ru": "Рисованный режим", "type": "bool", "default": false, "group": "Grain", "group_ru": "Волокна", "tip": "Clean flat bands without fine noise and no height", "tip_ru": "Чистые плоские полосы без мелкого шума и без высоты"},
+    {"id": "light_wood", "label": "Light Wood", "label_ru": "Светлое дерево", "type": "color", "default": [0.72, 0.52, 0.32], "group": "Colors", "group_ru": "Цвета"},
+    {"id": "dark_wood", "label": "Dark Wood", "label_ru": "Тёмное дерево", "type": "color", "default": [0.42, 0.26, 0.14], "group": "Colors", "group_ru": "Цвета"},
+    {"id": "roughness_variation", "label": "Roughness Variation", "label_ru": "Разброс шероховатости", "type": "float", "min": 0, "max": 1, "default": 0.15, "group": "Colors", "group_ru": "Цвета"},
+    {"id": "groove_depth", "label": "Groove Depth", "label_ru": "Глубина бороздок", "type": "float", "min": 0, "max": 1, "default": 0.3, "group": "Colors", "group_ru": "Цвета"}
+  ],
+  "presets": [
+    {"name": "Light", "name_ru": "Лёгкий", "values": {"intensity": 0.5, "distortion": 0.2}},
+    {"name": "Medium", "name_ru": "Средний", "values": {"intensity": 1.0}},
+    {"name": "Strong", "name_ru": "Сильный", "values": {"intensity": 1.6, "distortion": 0.7, "pores": 0.7}},
+    {"name": "Stylized", "name_ru": "Стилизованный", "values": {"hand_painted": true, "intensity": 1.0, "distortion": 0.5, "ring_spacing": 0.06}}
+  ]
+}

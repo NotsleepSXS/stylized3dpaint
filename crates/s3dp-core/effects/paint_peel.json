@@ -1,0 +1,42 @@
+{
+  "id": "paint_peel",
+  "name": "Paint Peel",
+  "name_ru": "Отслаивание краски",
+  "category": "wear",
+  "description": "Paint peeling off in flakes from edges and in patches, revealing the underlayer (primer, rust, bare metal or a custom color). On layer content: underlayer color / roughness / metallic, a height step and an optional lifted dark or light rim.",
+  "description_ru": "Краска отслаивается хлопьями от граней и пятнами, открывая подслой (грунт, ржавчину, металл или свой цвет). На содержимом слоя: цвет / шероховатость / металличность подслоя, ступенька по высоте и приподнятый тёмный или светлый край.",
+  "maps": ["curvature", "edges", "ambient_occlusion"],
+  "content_output": "value",
+  "params": [
+    {"id": "level", "label": "Wear Level", "label_ru": "Уровень износа", "type": "float", "min": 0, "max": 1, "default": 0.5, "group": "Wear", "group_ru": "Износ", "tip": "Amount of wear: 0 = none, 1 = almost everywhere", "tip_ru": "Количество износа: 0 — нет, 1 — почти везде"},
+    {"id": "contrast", "label": "Wear Contrast", "label_ru": "Контраст износа", "type": "float", "min": 0, "max": 1, "default": 0.7, "group": "Wear", "group_ru": "Износ", "tip": "Sharpness of the wear border", "tip_ru": "Резкость границы износа"},
+    {"id": "edge_width", "label": "Edge Width", "label_ru": "Ширина граней", "type": "float", "min": 0.001, "max": 0.1, "default": 0.01, "logarithmic": true, "group": "Wear", "group_ru": "Износ", "tip": "How far wear spreads from edges (fraction of the model size)", "tip_ru": "Насколько износ расходится от граней (доля размера модели)"},
+    {"id": "edge_smooth", "label": "Edges Smoothness", "label_ru": "Мягкость граней", "type": "float", "min": 0, "max": 1, "default": 0.3, "group": "Wear", "group_ru": "Износ", "tip": "0 = hard plateau along edges, 1 = soft averaged falloff", "tip_ru": "0 — ровная полоса вдоль граней, 1 — мягкий усреднённый спад"},
+    {"id": "curv_weight", "label": "Curvature Weight", "label_ru": "Вес кривизны", "type": "float", "min": 0, "max": 1, "default": 0.6, "group": "Wear", "group_ru": "Износ", "tip": "1 = wear follows edges, 0 = grunge only (anywhere)", "tip_ru": "1 — износ по граням, 0 — только гранж (где угодно)"},
+    {"id": "ao_mask", "label": "AO Masking", "label_ru": "Маска по AO", "type": "float", "min": 0, "max": 1, "default": 0.5, "group": "Wear", "group_ru": "Износ", "tip": "Protects occluded areas from wear", "tip_ru": "Защищает затенённые места от износа"},
+    {"id": "breakup", "label": "Breakup Amount", "label_ru": "Сила разбивки", "type": "float", "min": 0, "max": 1, "default": 0.5, "group": "Breakup", "group_ru": "Разбивка", "tip": "Large 3D noise removing wear in patches so edges are worn unevenly", "tip_ru": "Крупный 3D-шум убирает износ пятнами — грани изнашиваются неравномерно"},
+    {"id": "breakup_scale", "label": "Breakup Scale", "label_ru": "Масштаб разбивки", "type": "float", "min": 0.02, "max": 1.0, "default": 0.25, "logarithmic": true, "group": "Breakup", "group_ru": "Разбивка", "tip": "Size of the breakup patches (fraction of the model size)", "tip_ru": "Размер пятен разбивки (доля размера модели)"},
+    {"id": "loc_mode", "label": "Location Bias", "label_ru": "Смещение износа", "type": "enum", "options": [["direction", "Direction", "По направлению"], ["protrusions", "Protrusions", "Выступы"]], "default": 0, "group": "Location", "group_ru": "Расположение", "tip": "More wear towards a direction or on parts sticking out", "tip_ru": "Больше износа в заданную сторону или на выступающих частях"},
+    {"id": "loc_dir", "label": "Bias Direction", "label_ru": "Направление смещения", "type": "direction", "default": [0, -1, 0], "group": "Location", "group_ru": "Расположение", "tip": "World direction that gets more wear (down = bottom)", "tip_ru": "Мировое направление с большим износом (вниз — низ объекта)"},
+    {"id": "loc_strength", "label": "Bias Strength", "label_ru": "Сила смещения", "type": "float", "min": 0, "max": 1, "default": 0.0, "group": "Location", "group_ru": "Расположение"},
+    {"id": "chip_size", "label": "Chip Size", "label_ru": "Размер сколов", "type": "float", "min": 0.002, "max": 0.2, "default": 0.02, "logarithmic": true, "group": "Chips", "group_ru": "Сколы", "tip": "Size of individual chips (fraction of the model size)", "tip_ru": "Размер отдельных сколов (доля размера модели)"},
+    {"id": "chip_random", "label": "Chip Randomness", "label_ru": "Случайность сколов", "type": "float", "min": 0, "max": 1, "default": 0.5, "group": "Chips", "group_ru": "Сколы", "tip": "Per-chip variation and shape distortion", "tip_ru": "Разброс отдельных сколов и искажение формы"},
+    {"id": "hand_painted", "label": "Hand-painted Mode", "label_ru": "Рисованный режим", "type": "bool", "default": false, "group": "Hand-painted", "group_ru": "Рисованный стиль", "tip": "Clean hard flat shapes without noise and no height; optional colored rim", "tip_ru": "Чистые жёсткие плоские формы без шума и без высоты; цветной кант по желанию"},
+    {"id": "rim_width", "label": "Rim Width", "label_ru": "Ширина канта", "type": "float", "min": 0, "max": 1, "default": 0.0, "group": "Hand-painted", "group_ru": "Рисованный стиль", "tip": "Colored rim around chips (hand-painted mode, base color)", "tip_ru": "Цветной кант вокруг сколов (рисованный режим, базовый цвет)"},
+    {"id": "rim_light", "label": "Rim Highlight", "label_ru": "Светлый кант", "type": "color", "default": [1.0, 0.93, 0.8], "group": "Hand-painted", "group_ru": "Рисованный стиль", "tip": "Rim above the chip (lit side)", "tip_ru": "Кант над сколом (освещённая сторона)"},
+    {"id": "rim_dark", "label": "Rim Shadow", "label_ru": "Тёмный кант", "type": "color", "default": [0.12, 0.09, 0.07], "group": "Hand-painted", "group_ru": "Рисованный стиль", "tip": "Rim below the chip (shadow side)", "tip_ru": "Кант под сколом (теневая сторона)"},
+    {"id": "peel_size", "label": "Peel Size", "label_ru": "Размер хлопьев", "type": "float", "min": 0.01, "max": 0.4, "default": 0.08, "logarithmic": true, "group": "Peel", "group_ru": "Отслаивание", "tip": "Size of peeled flakes (fraction of the model size)", "tip_ru": "Размер отслоившихся хлопьев (доля размера модели)"},
+    {"id": "lift", "label": "Peel Edge Lift", "label_ru": "Подъём края", "type": "float", "min": -1, "max": 1, "default": -0.4, "group": "Peel", "group_ru": "Отслаивание", "tip": "Rim of lifted paint around the peel: negative = dark, positive = light", "tip_ru": "Кант приподнятой краски вокруг: минус — тёмный, плюс — светлый"},
+    {"id": "lift_width", "label": "Lift Width", "label_ru": "Ширина подъёма", "type": "float", "min": 0, "max": 1, "default": 0.3, "group": "Peel", "group_ru": "Отслаивание"},
+    {"id": "underlayer", "label": "Underlayer", "label_ru": "Подслой", "type": "enum", "options": [["primer", "Primer", "Грунт"], ["rust", "Rust", "Ржавчина"], ["metal", "Bare Metal", "Голый металл"], ["custom", "Custom", "Свой цвет"]], "default": 0, "group": "Peel", "group_ru": "Отслаивание"},
+    {"id": "under_color", "label": "Underlayer Color", "label_ru": "Цвет подслоя", "type": "color", "default": [0.6, 0.6, 0.6], "group": "Peel", "group_ru": "Отслаивание", "tip": "Used when Underlayer = Custom", "tip_ru": "Используется при подслое «Свой цвет»"},
+    {"id": "under_roughness", "label": "Underlayer Roughness", "label_ru": "Шероховатость подслоя", "type": "float", "min": 0, "max": 1, "default": 0.8, "group": "Peel", "group_ru": "Отслаивание"},
+    {"id": "height_step", "label": "Height Step", "label_ru": "Ступенька высоты", "type": "float", "min": 0, "max": 1, "default": 0.4, "group": "Peel", "group_ru": "Отслаивание", "tip": "Depth of the peeled area (paint thickness)", "tip_ru": "Глубина отслоившегося участка (толщина краски)"}
+  ],
+  "presets": [
+    {"name": "Light", "name_ru": "Лёгкий", "values": {"level": 0.35}},
+    {"name": "Medium", "name_ru": "Средний", "values": {"level": 0.5}},
+    {"name": "Strong", "name_ru": "Сильный", "values": {"level": 0.75, "peel_size": 0.15, "curv_weight": 0.4, "height_step": 0.6}},
+    {"name": "Stylized", "name_ru": "Стилизованный", "values": {"hand_painted": true, "contrast": 1.0, "rim_width": 0.4, "breakup": 0.6, "level": 0.5, "lift": 0.0}}
+  ]
+}

@@ -67,7 +67,7 @@ impl Baked {
 fn bake(mesh: &Mesh, high: Option<&Mesh>, settings: &BakeSettings) -> Option<Baked> {
     let (device, queue) = device()?;
     let mut vp = Viewport::new(&device);
-        vp.paint.throttle_effects = false;
+    vp.paint.throttle = false;
     vp.set_mesh(&device, &queue, mesh, TEX);
     vp.bake_now(&device, &queue, mesh, high, settings);
     let maps = vp.paint.sets[0]
@@ -192,15 +192,37 @@ fn preview_monkey() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/test/monkey_crate.glb");
     let mesh = s3dp_core::import::load(&path).unwrap();
     let mut vp = Viewport::new(&device);
-        vp.paint.throttle_effects = false;
+    vp.paint.throttle = false;
     vp.set_mesh(&device, &queue, &mesh, 1024);
     let t = std::time::Instant::now();
-    vp.bake_now(&device, &queue, &mesh, None, &BakeSettings::preset(BakeStyle::Stylized));
+    let mut st = BakeSettings::preset(BakeStyle::Stylized);
+    if std::env::var("NOSMOOTH").is_ok() {
+        st.smoothing = 0.0;
+    }
+    vp.bake_now(&device, &queue, &mesh, None, &st);
     println!("bake took {:?}", t.elapsed());
+    for m in [BakedMap::Edges, BakedMap::Cavity, BakedMap::Curvature] {
+        let data = gpu::read_texture(&device, &queue, &vp.paint.sets[0].baked[m.index()]).unwrap();
+        let out = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("preview_uv_{}.png", m.file_name()));
+        image::save_buffer(out, &data, 1024, 1024, image::ColorType::L8).unwrap();
+    }
     let mut cam = OrbitCamera { yaw: 0.5, pitch: 0.25, ..Default::default() };
     let b = mesh.bounds();
     cam.frame(b.center(), b.radius(), 1.5);
     let size = [900, 600];
+    // Close-up of the monkey (at the origin) to spot per-polygon artifacts.
+    let mut close = OrbitCamera { yaw: 0.35, pitch: 0.2, ..Default::default() };
+    close.frame(glam::Vec3::ZERO, 1.2, 1.5);
+    for (name, mode) in [
+        ("edges", ShadingMode::Baked(BakedMap::Edges)),
+        ("cavity", ShadingMode::Baked(BakedMap::Cavity)),
+        ("curvature", ShadingMode::Baked(BakedMap::Curvature)),
+    ] {
+        vp.render(&device, &queue, size, &close, mode);
+        let (w, h, frame) = vp.read_color(&device, &queue).unwrap();
+        let out = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("preview_close_{name}.png"));
+        image::save_buffer(&out, &frame, w, h, image::ColorType::Rgba8).unwrap();
+    }
     for (name, mode) in [
         ("lit", ShadingMode::Lit),
         ("edges", ShadingMode::Baked(BakedMap::Edges)),
@@ -213,5 +235,107 @@ fn preview_monkey() {
         let (w, h, frame) = vp.read_color(&device, &queue).unwrap();
         let out = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("preview_{name}.png"));
         image::save_buffer(&out, &frame, w, h, image::ColorType::Rgba8).unwrap();
+    }
+}
+
+/// Light settings for the curvature tests (only edges / cavity / curvature matter).
+fn light(style: BakeStyle) -> BakeSettings {
+    let mut s = BakeSettings::preset(style);
+    s.ao_samples = 8;
+    s.sky_samples = 4;
+    s.thickness_samples = 4;
+    s.edge_samples = 32;
+    s
+}
+
+/// Unit-sphere direction of texel (x, y) of `Mesh::uv_sphere`.
+fn sphere_dir(x: u32, y: u32) -> Vec3 {
+    let (u, v) = ((x as f32 + 0.5) / TEX as f32, (y as f32 + 0.5) / TEX as f32);
+    let (theta, phi) = (v * std::f32::consts::PI, u * std::f32::consts::TAU);
+    Vec3::new(theta.sin() * phi.cos(), theta.cos(), theta.sin() * phi.sin())
+}
+
+/// Texels away from the poles and the u seam.
+fn sphere_texels() -> impl Iterator<Item = (u32, u32)> {
+    (24..TEX - 24).step_by(2).flat_map(|y| (4..TEX - 4).step_by(2).map(move |x| (x, y)))
+}
+
+struct Stats {
+    mean: f32,
+    std: f32,
+    min: f32,
+    max: f32,
+}
+
+fn stats(b: &Baked, m: BakedMap) -> Stats {
+    let v: Vec<f32> = sphere_texels().map(|t| b.scalar(m, t)).collect();
+    let mean = v.iter().sum::<f32>() / v.len() as f32;
+    let std = (v.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / v.len() as f32).sqrt();
+    let min = v.iter().cloned().fold(f32::MAX, f32::min);
+    let max = v.iter().cloned().fold(f32::MIN, f32::max);
+    Stats { mean, std, min, max }
+}
+
+#[test]
+fn smooth_sphere_curvature_is_clean() {
+    let mesh = Mesh::uv_sphere(64, 32);
+    for style in [BakeStyle::Stylized, BakeStyle::Realistic] {
+        let Some(b) = bake(&mesh, None, &light(style)) else { return };
+        let c = stats(&b, BakedMap::Curvature);
+        let e = stats(&b, BakedMap::Edges);
+        let k = stats(&b, BakedMap::Cavity);
+        println!(
+            "{style:?} sphere: curvature mean {:.3} std {:.4} [{:.3}, {:.3}]; edges mean {:.3} [{:.3}, {:.3}]; cavity mean {:.3} max {:.3}",
+            c.mean, c.std, c.min, c.max, e.mean, e.min, e.max, k.mean, k.max
+        );
+        assert!(c.mean > 0.5 && c.mean < 0.65, "convex sphere reads slightly convex, got {}", c.mean);
+        assert!(c.min >= 0.5, "no concave texels on a convex sphere, got {}", c.min);
+        assert!(c.max - c.min < 0.06 && c.std < 0.012, "no per-triangle pattern in curvature");
+        assert!(e.max < 0.2 && e.max - e.min < 0.06, "no polygon edges in the edge map");
+        assert!(k.max < 0.03, "no cavities on a convex sphere, got {}", k.max);
+    }
+}
+
+#[test]
+fn bumpy_sphere_curvature_follows_bumps() {
+    // Smooth waves on a sphere, baked from itself (no high-poly).
+    let wave = |d: Vec3| (d.x * 6.0).sin() * (d.y * 6.0).sin() * (d.z * 6.0).sin();
+    let mut mesh = Mesh::uv_sphere(128, 64);
+    for v in &mut mesh.vertices {
+        let d = Vec3::from(v.position);
+        v.position = (d * (1.0 + 0.06 * wave(d))).into();
+    }
+    mesh.compute_normals();
+    mesh.compute_tangents();
+    for style in [BakeStyle::Stylized, BakeStyle::Realistic] {
+        let Some(b) = bake(&mesh, None, &light(style)) else { return };
+        // Peaks of the wave are convex, troughs concave.
+        let (mut peak, mut np, mut dip, mut nd) = (0.0, 0, 0.0, 0);
+        let (mut sxy, mut sx, mut sy, mut sxx, mut syy, mut n) = (0.0f64, 0.0f64, 0.0f64, 0.0f64, 0.0f64, 0.0f64);
+        for (x, y) in sphere_texels() {
+            let g = wave(sphere_dir(x, y));
+            let c = b.scalar(BakedMap::Curvature, (x, y));
+            if g > 0.6 {
+                peak += c;
+                np += 1;
+            } else if g < -0.6 {
+                dip += c;
+                nd += 1;
+            }
+            let (g, c) = (g as f64, c as f64);
+            sxy += g * c;
+            sx += g;
+            sy += c;
+            sxx += g * g;
+            syy += c * c;
+            n += 1.0;
+        }
+        let corr = (n * sxy - sx * sy) / ((n * sxx - sx * sx).sqrt() * (n * syy - sy * sy).sqrt());
+        let (peak, dip) = (peak / np as f32, dip / nd as f32);
+        let k = stats(&b, BakedMap::Cavity);
+        let e = stats(&b, BakedMap::Edges);
+        println!("{style:?} bumpy: curvature peaks {peak:.3} dips {dip:.3} corr {corr:.3}; edges mean {:.3} cavity mean {:.3}", e.mean, k.mean);
+        assert!(peak > 0.52 && dip < 0.495 && peak - dip > 0.04, "peaks convex, dips concave");
+        assert!(corr > 0.6, "curvature follows the bumps, corr {corr}");
     }
 }

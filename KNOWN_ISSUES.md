@@ -1,6 +1,13 @@
 # Known issues
 
-## Stylized bake: artifacts on every edge / polygon (reported 2026-10-12)
+## Stylized bake: artifacts on every edge / polygon (reported 2026-10-12) — FIXED 2026-10-13
+
+Fixed: edges / cavity / curvature now compare the interpolated normals of nearby surface points
+with fixed probe directions and radii (bake.wgsl), so faceted smooth-shaded meshes read smooth
+and the map is identical across UV seams. Remaining: faint thin rings in Cavity on very dense
+concentric topology (monkey eyes) — low priority.
+
+Original report:
 
 User report: in the Stylized bake every edge of the object is emphasized in Edges / Cavity
 (and similar maps), with lots of artifacts.

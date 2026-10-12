@@ -1,0 +1,29 @@
+{
+  "id": "toon_shading",
+  "name": "Toon Shading",
+  "name_ru": "Мультяшное затенение",
+  "category": "stylize",
+  "description": "Cel shading baked into Base Color: 2-5 light bands with soft steps, shadow / mid / light colors, a specular spot and curvature ink outlines.",
+  "description_ru": "Цел-шейдинг в Base Color: 2–5 полос света с мягкими переходами, цвета тени / полутона / света, пятно блика и контур по кривизне.",
+  "maps": ["ambient_occlusion", "curvature", "edges", "cavity"],
+  "params": [
+    {"id": "light_dir", "label": "Light Direction", "label_ru": "Направление света", "type": "direction", "default": [0.5, 0.75, 0.45], "group": "Bands", "group_ru": "Полосы"},
+    {"id": "steps", "label": "Steps", "label_ru": "Ступени", "type": "int", "min": 2, "max": 5, "default": 3, "group": "Bands", "group_ru": "Полосы"},
+    {"id": "softness", "label": "Step Softness", "label_ru": "Мягкость ступеней", "type": "float", "min": 0, "max": 1, "default": 0.15, "group": "Bands", "group_ru": "Полосы"},
+    {"id": "ao_influence", "label": "AO Influence", "label_ru": "Влияние AO", "type": "float", "min": 0, "max": 1, "default": 0.5, "group": "Bands", "group_ru": "Полосы"},
+    {"id": "mode", "label": "Mode", "label_ru": "Режим", "type": "enum", "options": [["multiply", "Multiply base", "Умножать основу"], ["replace", "Replace", "Заменить"]], "default": 0, "group": "Bands", "group_ru": "Полосы"},
+    {"id": "shadow_color", "label": "Shadow Color", "label_ru": "Цвет тени", "type": "color", "default": [0.42, 0.38, 0.6], "group": "Colors", "group_ru": "Цвета"},
+    {"id": "mid_color", "label": "Mid Color", "label_ru": "Цвет полутона", "type": "color", "default": [0.8, 0.76, 0.84], "group": "Colors", "group_ru": "Цвета"},
+    {"id": "light_color", "label": "Light Color", "label_ru": "Цвет света", "type": "color", "default": [1.0, 0.97, 0.9], "group": "Colors", "group_ru": "Цвета"},
+    {"id": "spec_size", "label": "Specular Size", "label_ru": "Размер блика", "type": "float", "min": 0, "max": 1, "default": 0.25, "group": "Specular", "group_ru": "Блик", "tip": "0 = no specular spot", "tip_ru": "0 = без блика"},
+    {"id": "spec_threshold", "label": "Specular Softness", "label_ru": "Мягкость блика", "type": "float", "min": 0, "max": 1, "default": 0.1, "group": "Specular", "group_ru": "Блик"},
+    {"id": "spec_color", "label": "Specular Color", "label_ru": "Цвет блика", "type": "color", "default": [1.0, 1.0, 0.95], "group": "Specular", "group_ru": "Блик"},
+    {"id": "outline_width", "label": "Outline Width", "label_ru": "Ширина контура", "type": "float", "min": 0, "max": 1, "default": 0.3, "group": "Outline", "group_ru": "Контур", "tip": "Ink lines along strong curvature (needs a bake); 0 = off", "tip_ru": "Линии по сильной кривизне (нужно запекание); 0 = выкл."},
+    {"id": "outline_color", "label": "Outline Color", "label_ru": "Цвет контура", "type": "color", "default": [0.12, 0.08, 0.15], "group": "Outline", "group_ru": "Контур"}
+  ],
+  "presets": [
+    {"name": "Classic 2 tones", "name_ru": "Классика: 2 тона", "values": {"steps": 2, "softness": 0.05, "spec_size": 0.2}},
+    {"name": "Soft 3 tones", "name_ru": "Мягкие 3 тона", "values": {"steps": 3, "softness": 0.4, "spec_size": 0.15, "outline_width": 0.15}},
+    {"name": "Anime", "name_ru": "Аниме", "values": {"steps": 2, "softness": 0.02, "shadow_color": [0.55, 0.5, 0.72], "spec_size": 0.3, "spec_threshold": 0.02, "outline_width": 0.4}}
+  ]
+}

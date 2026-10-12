@@ -1,0 +1,31 @@
+{
+  "id": "baked_lighting_stylized",
+  "name": "Stylized Baked Lighting",
+  "name_ru": "Стилизованное запечённое освещение",
+  "category": "stylize",
+  "description": "Paints hand-painted lighting into Base Color: sun with half-Lambert wrap, tinted (never black) shadows, sky / ground bounce, ambient, rim light and AO. Other channels are untouched.",
+  "description_ru": "Рисует освещение прямо в Base Color: солнце с мягким обволакиванием (half-Lambert), цветные (не чёрные) тени, отражённый свет неба / земли, фон, контровой свет и AO. Остальные каналы не меняются.",
+  "maps": ["ambient_occlusion", "sky_light", "edges", "curvature"],
+  "params": [
+    {"id": "sun_dir", "label": "Sun Direction", "label_ru": "Направление солнца", "type": "direction", "default": [0.45, 0.8, 0.4], "group": "Sun", "group_ru": "Солнце", "tip": "Direction towards the sun", "tip_ru": "Направление на солнце"},
+    {"id": "sun_color", "label": "Sun Color", "label_ru": "Цвет солнца", "type": "color", "default": [1.0, 0.94, 0.82], "group": "Sun", "group_ru": "Солнце"},
+    {"id": "intensity", "label": "Intensity", "label_ru": "Интенсивность", "type": "float", "min": 0, "max": 3, "default": 1.15, "group": "Sun", "group_ru": "Солнце"},
+    {"id": "hardness", "label": "Shadow Hardness", "label_ru": "Жёсткость тени", "type": "float", "min": 0, "max": 1, "default": 0.35, "group": "Sun", "group_ru": "Солнце", "tip": "0 = soft wrap-around, 1 = crisp terminator", "tip_ru": "0 = мягкое обволакивание, 1 = чёткая граница тени"},
+    {"id": "shadow_color", "label": "Shadow Color", "label_ru": "Цвет тени", "type": "color", "default": [0.52, 0.5, 0.7], "group": "Sun", "group_ru": "Солнце", "tip": "Shadows are tinted, never black", "tip_ru": "Тени цветные, не чёрные"},
+    {"id": "sky_shadow", "label": "Baked Sky Shadow", "label_ru": "Тень от неба (запечённая)", "type": "float", "min": 0, "max": 1, "default": 0.6, "group": "Sun", "group_ru": "Солнце", "tip": "Uses the baked sky light map as a soft cast-shadow proxy", "tip_ru": "Запечённая карта неба как мягкая падающая тень"},
+    {"id": "sky_color", "label": "Sky Color", "label_ru": "Цвет неба", "type": "color", "default": [0.62, 0.75, 1.0], "group": "Sky / Ground", "group_ru": "Небо / земля"},
+    {"id": "ground_color", "label": "Ground Color", "label_ru": "Цвет земли", "type": "color", "default": [0.55, 0.42, 0.3], "group": "Sky / Ground", "group_ru": "Небо / земля"},
+    {"id": "hemi", "label": "Sky / Ground Strength", "label_ru": "Сила неба / земли", "type": "float", "min": 0, "max": 1, "default": 0.25, "group": "Sky / Ground", "group_ru": "Небо / земля"},
+    {"id": "ambient_color", "label": "Ambient Color", "label_ru": "Цвет фона", "type": "color", "default": [0.2, 0.2, 0.24], "group": "Sky / Ground", "group_ru": "Небо / земля"},
+    {"id": "rim_color", "label": "Rim Color", "label_ru": "Цвет контрового", "type": "color", "default": [1.0, 0.9, 0.75], "group": "Rim Light", "group_ru": "Контровой свет"},
+    {"id": "rim_width", "label": "Rim Width", "label_ru": "Ширина контрового", "type": "float", "min": 0, "max": 1, "default": 0.3, "group": "Rim Light", "group_ru": "Контровой свет"},
+    {"id": "rim_strength", "label": "Rim Strength", "label_ru": "Сила контрового", "type": "float", "min": 0, "max": 2, "default": 0.35, "group": "Rim Light", "group_ru": "Контровой свет", "tip": "View independent: back-light opposite the sun plus convex edges", "tip_ru": "Не зависит от вида: подсветка со стороны, противоположной солнцу, плюс выпуклые грани"},
+    {"id": "ao_influence", "label": "AO Influence", "label_ru": "Влияние AO", "type": "float", "min": 0, "max": 1, "default": 0.7, "group": "Occlusion", "group_ru": "Затенение"}
+  ],
+  "presets": [
+    {"name": "Soft", "name_ru": "Мягкий", "values": {"hardness": 0.1, "intensity": 1.0, "hemi": 0.35, "rim_strength": 0.2}},
+    {"name": "Hand-painted", "name_ru": "Рисованный", "values": {"hardness": 0.35, "intensity": 1.15, "hemi": 0.25, "rim_strength": 0.35}},
+    {"name": "Toon", "name_ru": "Мультяшный", "values": {"hardness": 0.95, "intensity": 1.2, "hemi": 0.1, "rim_strength": 0.6, "rim_width": 0.2, "ao_influence": 0.3}},
+    {"name": "Sunset", "name_ru": "Закат", "values": {"sun_color": [1.0, 0.7, 0.45], "shadow_color": [0.45, 0.4, 0.75], "sky_color": [0.9, 0.6, 0.7], "intensity": 1.3, "rim_color": [1.0, 0.6, 0.35]}}
+  ]
+}

@@ -499,11 +499,12 @@ impl BakeJob {
         let work = self.work.as_ref().unwrap();
         let size = set.size;
         if self.smoothing > 0.0 {
-            for target in [&work.maps_a, &work.maps_b] {
+            for (index, target) in [&work.maps_a, &work.maps_b].into_iter().enumerate() {
                 // Separable blur: target -> tmp along x, tmp -> target along y.
                 for (axis, src, dst) in [(0.0, target, &work.tmp), (1.0, &work.tmp, target)] {
                     let mut p = self.params;
                     p.extra[2] = axis;
+                    p.extra[3] = index as f32;
                     queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&p));
                     let s = &baker.smooth;
                     let groups = [

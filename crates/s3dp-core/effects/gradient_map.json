@@ -1,0 +1,274 @@
+{
+ "id": "gradient_map",
+ "name": "Gradient Map",
+ "name_ru": "Карта градиента",
+ "category": "color",
+ "description": "Base Color (or mask): maps a source value (luminance, R, height, AO, curvature) to a gradient of up to 5 color stops. Positions are expected in ascending order.",
+ "description_ru": "Отображает исходное значение (яркость, R, высоту, AO, кривизну) на градиент до 5 цветов. Позиции — по возрастанию.",
+ "params": [
+  {
+   "id": "count",
+   "label": "Stops",
+   "label_ru": "Точек",
+   "type": "int",
+   "min": 2,
+   "max": 5,
+   "default": 5,
+   "group": "Gradient",
+   "group_ru": "Градиент"
+  },
+  {
+   "id": "interp",
+   "label": "Interpolation",
+   "label_ru": "Интерполяция",
+   "type": "enum",
+   "options": [
+    [
+     "linear",
+     "Linear",
+     "Линейная"
+    ],
+    [
+     "smooth",
+     "Smooth",
+     "Плавная"
+    ],
+    [
+     "constant",
+     "Constant",
+     "Ступенчатая"
+    ]
+   ],
+   "default": 0,
+   "group": "Gradient",
+   "group_ru": "Градиент"
+  },
+  {
+   "id": "source",
+   "label": "Source",
+   "label_ru": "Источник",
+   "type": "enum",
+   "options": [
+    [
+     "luminance",
+     "Luminance",
+     "Яркость"
+    ],
+    [
+     "r",
+     "R channel",
+     "Канал R"
+    ],
+    [
+     "pos_y",
+     "Position Y",
+     "Позиция Y"
+    ],
+    [
+     "ao",
+     "Ambient Occlusion",
+     "AO"
+    ],
+    [
+     "curvature",
+     "Curvature",
+     "Кривизна"
+    ]
+   ],
+   "default": 0,
+   "group": "Gradient",
+   "group_ru": "Градиент"
+  },
+  {
+   "id": "preserve_lum",
+   "label": "Keep Luminance",
+   "label_ru": "Сохранять яркость",
+   "type": "float",
+   "min": 0,
+   "max": 1,
+   "default": 0,
+   "group": "Gradient",
+   "group_ru": "Градиент",
+   "tip": "Keeps the input luminance, takes only hue / saturation from the gradient",
+   "tip_ru": "Сохраняет яркость входа, берёт из градиента только тон / насыщенность"
+  },
+  {
+   "id": "c1",
+   "label": "Color 1",
+   "label_ru": "Цвет 1",
+   "type": "color",
+   "default": [
+    0.12,
+    0.08,
+    0.2
+   ],
+   "group": "Stops",
+   "group_ru": "Точки"
+  },
+  {
+   "id": "t1",
+   "label": "Position 1",
+   "label_ru": "Позиция 1",
+   "type": "float",
+   "min": 0,
+   "max": 1,
+   "default": 0.0,
+   "group": "Stops",
+   "group_ru": "Точки"
+  },
+  {
+   "id": "c2",
+   "label": "Color 2",
+   "label_ru": "Цвет 2",
+   "type": "color",
+   "default": [
+    0.35,
+    0.22,
+    0.35
+   ],
+   "group": "Stops",
+   "group_ru": "Точки"
+  },
+  {
+   "id": "t2",
+   "label": "Position 2",
+   "label_ru": "Позиция 2",
+   "type": "float",
+   "min": 0,
+   "max": 1,
+   "default": 0.25,
+   "group": "Stops",
+   "group_ru": "Точки"
+  },
+  {
+   "id": "c3",
+   "label": "Color 3",
+   "label_ru": "Цвет 3",
+   "type": "color",
+   "default": [
+    0.72,
+    0.42,
+    0.3
+   ],
+   "group": "Stops",
+   "group_ru": "Точки"
+  },
+  {
+   "id": "t3",
+   "label": "Position 3",
+   "label_ru": "Позиция 3",
+   "type": "float",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "group": "Stops",
+   "group_ru": "Точки"
+  },
+  {
+   "id": "c4",
+   "label": "Color 4",
+   "label_ru": "Цвет 4",
+   "type": "color",
+   "default": [
+    0.95,
+    0.75,
+    0.45
+   ],
+   "group": "Stops",
+   "group_ru": "Точки"
+  },
+  {
+   "id": "t4",
+   "label": "Position 4",
+   "label_ru": "Позиция 4",
+   "type": "float",
+   "min": 0,
+   "max": 1,
+   "default": 0.75,
+   "group": "Stops",
+   "group_ru": "Точки"
+  },
+  {
+   "id": "c5",
+   "label": "Color 5",
+   "label_ru": "Цвет 5",
+   "type": "color",
+   "default": [
+    1.0,
+    0.97,
+    0.85
+   ],
+   "group": "Stops",
+   "group_ru": "Точки"
+  },
+  {
+   "id": "t5",
+   "label": "Position 5",
+   "label_ru": "Позиция 5",
+   "type": "float",
+   "min": 0,
+   "max": 1,
+   "default": 1.0,
+   "group": "Stops",
+   "group_ru": "Точки"
+  }
+ ],
+ "presets": [
+  {
+   "name": "Warm painterly",
+   "name_ru": "Тёплый живописный",
+   "values": {}
+  },
+  {
+   "name": "Cool to warm",
+   "name_ru": "Холодный → тёплый",
+   "values": {
+    "count": 3,
+    "c1": [
+     0.15,
+     0.18,
+     0.35
+    ],
+    "t1": 0,
+    "c2": [
+     0.55,
+     0.55,
+     0.6
+    ],
+    "t2": 0.5,
+    "c3": [
+     1.0,
+     0.85,
+     0.6
+    ],
+    "t3": 1
+   }
+  },
+  {
+   "name": "Toon 3 tones",
+   "name_ru": "Мульт: 3 тона",
+   "values": {
+    "count": 3,
+    "interp": 2,
+    "c1": [
+     0.25,
+     0.22,
+     0.4
+    ],
+    "t1": 0,
+    "c2": [
+     0.6,
+     0.5,
+     0.55
+    ],
+    "t2": 0.35,
+    "c3": [
+     0.95,
+     0.88,
+     0.75
+    ],
+    "t3": 0.7
+   }
+  }
+ ]
+}

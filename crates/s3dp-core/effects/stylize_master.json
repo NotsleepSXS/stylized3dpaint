@@ -1,0 +1,72 @@
+{
+  "id": "stylize_master",
+  "name": "Stylization",
+  "name_ru": "Стилизация",
+  "category": "stylize",
+  "description": "Main hand-painted stylization filter: painterly brush strokes, smoothing of photo detail, colorize, gradient, baked lighting and edge / cavity accents. Place it as an effect layer or on a folder. A group with strength 0 is off.",
+  "description_ru": "Главный фильтр рисованной стилизации: мазки кисти, сглаживание фотодеталей, тонирование, градиент, запечённое освещение и акценты граней / полостей. Ставится как слой эффекта или на папку. Группа с силой 0 выключена.",
+  "neighbors": true,
+  "maps": ["ambient_occlusion", "edges", "cavity", "curvature", "sky_light"],
+  "params": [
+    {"id": "strength", "label": "Stylization", "label_ru": "Сила стилизации", "type": "float", "min": 0, "max": 1, "default": 1, "group": "Global", "group_ru": "Общие", "tip": "Scales every group below", "tip_ru": "Масштабирует все группы ниже"},
+
+    {"id": "br_strength", "label": "Strength", "label_ru": "Сила", "type": "float", "min": 0, "max": 1, "default": 0.8, "group": "Brush Strokes", "group_ru": "Мазки кисти", "tip": "0 = strokes off", "tip_ru": "0 = мазки выключены"},
+    {"id": "br_amount", "label": "Amount", "label_ru": "Количество", "type": "float", "min": 0, "max": 1, "default": 0.9, "group": "Brush Strokes", "group_ru": "Мазки кисти", "tip": "Density of strokes", "tip_ru": "Плотность мазков"},
+    {"id": "br_scale", "label": "Scale", "label_ru": "Масштаб", "type": "float", "min": 0.005, "max": 0.3, "default": 0.05, "logarithmic": true, "group": "Brush Strokes", "group_ru": "Мазки кисти", "tip": "Stroke spacing relative to the object", "tip_ru": "Шаг мазков относительно объекта"},
+    {"id": "br_size_x", "label": "Size X", "label_ru": "Размер X", "type": "float", "min": 0.1, "max": 1.6, "default": 1.4, "group": "Brush Strokes", "group_ru": "Мазки кисти", "tip": "Stroke length", "tip_ru": "Длина мазка"},
+    {"id": "br_size_y", "label": "Size Y", "label_ru": "Размер Y", "type": "float", "min": 0.05, "max": 1.6, "default": 0.55, "group": "Brush Strokes", "group_ru": "Мазки кисти", "tip": "Stroke width", "tip_ru": "Ширина мазка"},
+    {"id": "br_scale_rand", "label": "Scale Random", "label_ru": "Случайный размер", "type": "float", "min": 0, "max": 1, "default": 0.4, "group": "Brush Strokes", "group_ru": "Мазки кисти"},
+    {"id": "br_rotation", "label": "Rotation", "label_ru": "Поворот", "type": "float", "min": -180, "max": 180, "default": 0, "group": "Brush Strokes", "group_ru": "Мазки кисти", "tip": "Degrees from the world up direction", "tip_ru": "Градусы от мирового направления вверх"},
+    {"id": "br_rot_rand", "label": "Rotation Random", "label_ru": "Случайный поворот", "type": "float", "min": 0, "max": 1, "default": 0.25, "group": "Brush Strokes", "group_ru": "Мазки кисти"},
+    {"id": "br_normal_thr", "label": "Normal Threshold", "label_ru": "Порог нормали", "type": "float", "min": 5, "max": 90, "default": 40, "group": "Brush Strokes", "group_ru": "Мазки кисти", "tip": "Strokes stop where the surface turns more than this angle (degrees)", "tip_ru": "Мазки обрываются, где поверхность поворачивает больше этого угла (градусы)"},
+    {"id": "br_color_var", "label": "Color Variation", "label_ru": "Вариация цвета", "type": "float", "min": 0, "max": 1, "default": 0.35, "group": "Brush Strokes", "group_ru": "Мазки кисти", "tip": "Per-stroke value / hue jitter and bristle streaks", "tip_ru": "Разброс яркости / тона по мазкам и следы щетины"},
+    {"id": "seed", "label": "Seed", "label_ru": "Сид", "type": "seed", "default": 1, "group": "Brush Strokes", "group_ru": "Мазки кисти"},
+
+    {"id": "sm_strength", "label": "Strength", "label_ru": "Сила", "type": "float", "min": 0, "max": 1, "default": 0.5, "group": "Smoothness", "group_ru": "Сглаживание", "tip": "Blurs every channel to remove photo detail (0 = off)", "tip_ru": "Размывает все каналы, убирая фотодетали (0 = выкл.)"},
+    {"id": "sm_radius", "label": "Radius", "label_ru": "Радиус", "type": "float", "min": 0.001, "max": 0.1, "default": 0.012, "logarithmic": true, "group": "Smoothness", "group_ru": "Сглаживание", "tip": "Relative to the object size", "tip_ru": "Относительно размера объекта"},
+
+    {"id": "co_strength", "label": "Opacity", "label_ru": "Непрозрачность", "type": "float", "min": 0, "max": 1, "default": 0, "group": "Colorize", "group_ru": "Тонирование", "tip": "Group strength (0 = off)", "tip_ru": "Сила группы (0 = выкл.)"},
+    {"id": "co_color", "label": "Color", "label_ru": "Цвет", "type": "color", "default": [0.85, 0.6, 0.4], "group": "Colorize", "group_ru": "Тонирование"},
+    {"id": "co_grunge", "label": "Grunge Variation", "label_ru": "Вариация гранжем", "type": "float", "min": 0, "max": 1, "default": 0.5, "group": "Colorize", "group_ru": "Тонирование"},
+    {"id": "co_scale", "label": "Pattern Scale", "label_ru": "Масштаб узора", "type": "float", "min": 0.01, "max": 1, "default": 0.15, "logarithmic": true, "group": "Colorize", "group_ru": "Тонирование"},
+
+    {"id": "gr_strength", "label": "Strength", "label_ru": "Сила", "type": "float", "min": 0, "max": 1, "default": 0.6, "group": "Gradient", "group_ru": "Градиент", "tip": "0 = off", "tip_ru": "0 = выкл."},
+    {"id": "gr_color1", "label": "Top Color", "label_ru": "Цвет сверху", "type": "color", "default": [1.0, 0.86, 0.62], "group": "Gradient", "group_ru": "Градиент"},
+    {"id": "gr_op1", "label": "Top Opacity", "label_ru": "Непрозрачность сверху", "type": "float", "min": 0, "max": 1, "default": 0.45, "group": "Gradient", "group_ru": "Градиент"},
+    {"id": "gr_blend1", "label": "Top Blend", "label_ru": "Наложение сверху", "type": "enum", "options": [["normal", "Normal", "Обычное"], ["multiply", "Multiply", "Умножение"], ["screen", "Screen", "Экран"], ["overlay", "Overlay", "Перекрытие"], ["soft_light", "Soft Light", "Мягкий свет"]], "default": 4, "group": "Gradient", "group_ru": "Градиент"},
+    {"id": "gr_color2", "label": "Bottom Color", "label_ru": "Цвет снизу", "type": "color", "default": [0.42, 0.45, 0.72], "group": "Gradient", "group_ru": "Градиент"},
+    {"id": "gr_op2", "label": "Bottom Opacity", "label_ru": "Непрозрачность снизу", "type": "float", "min": 0, "max": 1, "default": 0.35, "group": "Gradient", "group_ru": "Градиент", "tip": "0 = one-color gradient", "tip_ru": "0 = одноцветный градиент"},
+    {"id": "gr_blend2", "label": "Bottom Blend", "label_ru": "Наложение снизу", "type": "enum", "options": [["normal", "Normal", "Обычное"], ["multiply", "Multiply", "Умножение"], ["screen", "Screen", "Экран"], ["overlay", "Overlay", "Перекрытие"], ["soft_light", "Soft Light", "Мягкий свет"]], "default": 1, "group": "Gradient", "group_ru": "Градиент"},
+    {"id": "gr_h", "label": "Horizontal Rotation", "label_ru": "Поворот по горизонтали", "type": "float", "min": 0, "max": 360, "default": 0, "group": "Gradient", "group_ru": "Градиент"},
+    {"id": "gr_v", "label": "Vertical Rotation", "label_ru": "Поворот по вертикали", "type": "float", "min": -90, "max": 90, "default": 90, "group": "Gradient", "group_ru": "Градиент", "tip": "90 = bottom to top", "tip_ru": "90 = снизу вверх"},
+    {"id": "gr_offset", "label": "Offset", "label_ru": "Смещение", "type": "float", "min": -1, "max": 1, "default": 0, "group": "Gradient", "group_ru": "Градиент"},
+    {"id": "gr_contrast", "label": "Contrast", "label_ru": "Контраст", "type": "float", "min": 0, "max": 1, "default": 0.1, "group": "Gradient", "group_ru": "Градиент"},
+    {"id": "gr_invert", "label": "Invert", "label_ru": "Инвертировать", "type": "bool", "default": false, "group": "Gradient", "group_ru": "Градиент"},
+
+    {"id": "bl_strength", "label": "Strength", "label_ru": "Сила", "type": "float", "min": 0, "max": 1, "default": 0.5, "group": "Baked Lighting", "group_ru": "Запечённое освещение", "tip": "0 = off", "tip_ru": "0 = выкл."},
+    {"id": "bl_dir", "label": "Light Direction", "label_ru": "Направление света", "type": "direction", "default": [0.5, 0.75, 0.45], "group": "Baked Lighting", "group_ru": "Запечённое освещение"},
+    {"id": "bl_diff_int", "label": "Diffuse Intensity", "label_ru": "Сила диффузного", "type": "float", "min": 0, "max": 1, "default": 0.7, "group": "Baked Lighting", "group_ru": "Запечённое освещение"},
+    {"id": "bl_diff_color", "label": "Diffuse Color", "label_ru": "Цвет диффузного", "type": "color", "default": [1.0, 0.95, 0.85], "group": "Baked Lighting", "group_ru": "Запечённое освещение"},
+    {"id": "bl_diff_radius", "label": "Diffuse Radius", "label_ru": "Радиус диффузного", "type": "float", "min": 0, "max": 1, "default": 0.7, "group": "Baked Lighting", "group_ru": "Запечённое освещение", "tip": "Width of the light / shadow transition", "tip_ru": "Ширина перехода свет / тень"},
+    {"id": "bl_diff_contrast", "label": "Diffuse Contrast", "label_ru": "Контраст диффузного", "type": "float", "min": 0, "max": 1, "default": 0.5, "group": "Baked Lighting", "group_ru": "Запечённое освещение"},
+    {"id": "bl_spec_int", "label": "Specular Intensity", "label_ru": "Сила блика", "type": "float", "min": 0, "max": 1, "default": 0.25, "group": "Baked Lighting", "group_ru": "Запечённое освещение"},
+    {"id": "bl_spec_color", "label": "Specular Color", "label_ru": "Цвет блика", "type": "color", "default": [1.0, 0.97, 0.9], "group": "Baked Lighting", "group_ru": "Запечённое освещение"},
+    {"id": "bl_spec_radius", "label": "Specular Radius", "label_ru": "Радиус блика", "type": "float", "min": 0, "max": 1, "default": 0.3, "group": "Baked Lighting", "group_ru": "Запечённое освещение"},
+
+    {"id": "ec_strength", "label": "Strength", "label_ru": "Сила", "type": "float", "min": 0, "max": 1, "default": 0.7, "group": "Edges & Cavities", "group_ru": "Грани и полости", "tip": "0 = off (needs baked edges / cavity maps)", "tip_ru": "0 = выкл. (нужны запечённые карты граней / полостей)"},
+    {"id": "ec_mode", "label": "Mode", "label_ru": "Режим", "type": "enum", "options": [["edges", "Edges", "Грани"], ["cavities", "Cavities", "Полости"], ["both", "Both", "Оба"]], "default": 2, "group": "Edges & Cavities", "group_ru": "Грани и полости"},
+    {"id": "ec_spread", "label": "Spread", "label_ru": "Растекание", "type": "float", "min": 0, "max": 0.05, "default": 0.006, "group": "Edges & Cavities", "group_ru": "Грани и полости", "tip": "Widens edges and cavities (relative to the object)", "tip_ru": "Расширяет грани и полости (относительно объекта)"},
+    {"id": "ec_edge_contrast", "label": "Edge Contrast", "label_ru": "Контраст граней", "type": "float", "min": 0, "max": 1, "default": 0.3, "group": "Edges & Cavities", "group_ru": "Грани и полости"},
+    {"id": "ec_edge_op", "label": "Edge Opacity", "label_ru": "Непрозрачность граней", "type": "float", "min": 0, "max": 1, "default": 0.6, "group": "Edges & Cavities", "group_ru": "Грани и полости"},
+    {"id": "ec_edge_color", "label": "Edge Color", "label_ru": "Цвет граней", "type": "color", "default": [0.75, 0.7, 0.6], "group": "Edges & Cavities", "group_ru": "Грани и полости", "tip": "Screened over the base (lightens)", "tip_ru": "Накладывается «экраном» (осветляет)"},
+    {"id": "ec_cav_contrast", "label": "Cavity Contrast", "label_ru": "Контраст полостей", "type": "float", "min": 0, "max": 1, "default": 0.2, "group": "Edges & Cavities", "group_ru": "Грани и полости"},
+    {"id": "ec_cav_op", "label": "Cavity Opacity", "label_ru": "Непрозрачность полостей", "type": "float", "min": 0, "max": 1, "default": 0.6, "group": "Edges & Cavities", "group_ru": "Грани и полости"},
+    {"id": "ec_cav_color", "label": "Cavity Color", "label_ru": "Цвет полостей", "type": "color", "default": [0.35, 0.3, 0.45], "group": "Edges & Cavities", "group_ru": "Грани и полости", "tip": "Multiplied over the base (darkens)", "tip_ru": "Умножается на основу (затемняет)"}
+  ],
+  "presets": [
+    {"name": "Hand-painted", "name_ru": "Рисованный", "values": {"strength": 1, "br_strength": 0.85, "br_amount": 0.9, "br_scale": 0.05, "br_size_x": 1.4, "br_size_y": 0.55, "br_color_var": 0.35, "sm_strength": 0.5, "sm_radius": 0.012, "co_strength": 0, "gr_strength": 0.6, "bl_strength": 0.5, "bl_diff_radius": 0.7, "bl_spec_int": 0.25, "ec_strength": 0.7, "ec_mode": 2}},
+    {"name": "Soft", "name_ru": "Мягкий", "values": {"strength": 1, "br_strength": 0.35, "br_scale": 0.08, "br_size_x": 1.2, "br_size_y": 0.8, "br_color_var": 0.15, "sm_strength": 0.9, "sm_radius": 0.025, "co_strength": 0, "gr_strength": 0.4, "bl_strength": 0.35, "bl_diff_radius": 1.0, "bl_diff_contrast": 0.3, "bl_spec_int": 0.1, "ec_strength": 0.4, "ec_edge_contrast": 0.1, "ec_cav_contrast": 0.1}},
+    {"name": "Toon", "name_ru": "Мультяшный", "values": {"strength": 1, "br_strength": 0, "sm_strength": 1, "sm_radius": 0.02, "co_strength": 0, "gr_strength": 0.3, "bl_strength": 0.9, "bl_diff_radius": 0.05, "bl_diff_contrast": 0.8, "bl_spec_int": 0.5, "bl_spec_radius": 0.1, "ec_strength": 1, "ec_mode": 2, "ec_edge_contrast": 0.8, "ec_cav_contrast": 0.8}},
+    {"name": "Painterly Bold", "name_ru": "Крупные мазки", "values": {"strength": 1, "br_strength": 1, "br_amount": 1, "br_scale": 0.09, "br_size_x": 1.6, "br_size_y": 0.6, "br_scale_rand": 0.6, "br_rot_rand": 0.4, "br_color_var": 0.6, "sm_strength": 0.7, "sm_radius": 0.02, "co_strength": 0.15, "gr_strength": 0.5, "bl_strength": 0.4, "ec_strength": 0.6}}
+  ]
+}

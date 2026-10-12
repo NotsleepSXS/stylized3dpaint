@@ -1,0 +1,22 @@
+{
+  "id": "palette_lock",
+  "name": "Palette Lock",
+  "name_ru": "Фиксированная палитра",
+  "category": "stylize",
+  "description": "Snaps Base Color to the nearest of up to 8 palette colors (perceptual sRGB distance), with optional world-space dithering between the two nearest.",
+  "description_ru": "Приводит Base Color к ближайшему из 8 цветов палитры (по восприятию, в sRGB), с необязательным дизерингом между двумя ближайшими в мировых координатах.",
+  "params": [
+    {"id": "count", "label": "Colors", "label_ru": "Цветов", "type": "int", "min": 2, "max": 8, "default": 8, "group": "Palette", "group_ru": "Палитра"},
+    {"id": "c1", "label": "Color 1", "label_ru": "Цвет 1", "type": "color", "default": [0.1, 0.08, 0.14], "group": "Palette", "group_ru": "Палитра"},
+    {"id": "c2", "label": "Color 2", "label_ru": "Цвет 2", "type": "color", "default": [0.3, 0.22, 0.32], "group": "Palette", "group_ru": "Палитра"},
+    {"id": "c3", "label": "Color 3", "label_ru": "Цвет 3", "type": "color", "default": [0.55, 0.3, 0.25], "group": "Palette", "group_ru": "Палитра"},
+    {"id": "c4", "label": "Color 4", "label_ru": "Цвет 4", "type": "color", "default": [0.85, 0.55, 0.35], "group": "Palette", "group_ru": "Палитра"},
+    {"id": "c5", "label": "Color 5", "label_ru": "Цвет 5", "type": "color", "default": [0.98, 0.85, 0.6], "group": "Palette", "group_ru": "Палитра"},
+    {"id": "c6", "label": "Color 6", "label_ru": "Цвет 6", "type": "color", "default": [0.35, 0.55, 0.35], "group": "Palette", "group_ru": "Палитра"},
+    {"id": "c7", "label": "Color 7", "label_ru": "Цвет 7", "type": "color", "default": [0.3, 0.45, 0.7], "group": "Palette", "group_ru": "Палитра"},
+    {"id": "c8", "label": "Color 8", "label_ru": "Цвет 8", "type": "color", "default": [0.6, 0.6, 0.62], "group": "Palette", "group_ru": "Палитра"},
+    {"id": "dither", "label": "Dither", "label_ru": "Дизеринг", "type": "bool", "default": false, "group": "Dither", "group_ru": "Дизеринг"},
+    {"id": "dither_scale", "label": "Dither Scale", "label_ru": "Масштаб дизеринга", "type": "float", "min": 0.001, "max": 0.05, "default": 0.004, "logarithmic": true, "group": "Dither", "group_ru": "Дизеринг", "tip": "Dither cell size relative to the object", "tip_ru": "Размер ячейки дизеринга относительно объекта"},
+    {"id": "seed", "label": "Seed", "label_ru": "Сид", "type": "seed", "default": 1, "group": "Dither", "group_ru": "Дизеринг"}
+  ]
+}

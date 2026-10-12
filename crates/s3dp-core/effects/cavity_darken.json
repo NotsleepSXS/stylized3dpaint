@@ -1,0 +1,19 @@
+{
+  "id": "cavity_darken",
+  "name": "Cavity Darken",
+  "name_ru": "Затемнение полостей",
+  "category": "stylize",
+  "description": "Darkens and tints crevices in one step (baked cavity + concave curvature + AO), shifting the hue towards cool or warm in the shadows.",
+  "description_ru": "Затемняет и тонирует впадины за один шаг (запечённые полости + вогнутая кривизна + AO), сдвигая тон в тенях к холодному или тёплому.",
+  "maps": ["cavity", "curvature", "ambient_occlusion"],
+  "neighbors": false,
+  "params": [
+    {"id": "spread", "label": "Spread", "label_ru": "Растекание", "type": "float", "min": 0, "max": 0.05, "default": 0.008, "group": "Cavity", "group_ru": "Полости", "tip": "Widens the darkened area (relative to the object)", "tip_ru": "Расширяет затемнение (относительно объекта)"},
+    {"id": "intensity", "label": "Intensity", "label_ru": "Сила", "type": "float", "min": 0, "max": 2, "default": 1, "group": "Cavity", "group_ru": "Полости"},
+    {"id": "contrast", "label": "Contrast", "label_ru": "Контраст", "type": "float", "min": 0, "max": 1, "default": 0.3, "group": "Cavity", "group_ru": "Полости"},
+    {"id": "ao_amount", "label": "AO Amount", "label_ru": "Доля AO", "type": "float", "min": 0, "max": 1, "default": 0.4, "group": "Cavity", "group_ru": "Полости"},
+    {"id": "color", "label": "Color", "label_ru": "Цвет", "type": "color", "default": [0.38, 0.33, 0.5], "group": "Color", "group_ru": "Цвет", "tip": "Multiplied over the base", "tip_ru": "Умножается на основу"},
+    {"id": "hue_shift", "label": "Hue Shift (warm / cool)", "label_ru": "Сдвиг тона (тёплый / холодный)", "type": "float", "min": -1, "max": 1, "default": 0.4, "group": "Color", "group_ru": "Цвет", "tip": "+ towards cool blue, - towards warm red-orange", "tip_ru": "+ к холодному синему, - к тёплому красно-оранжевому"},
+    {"id": "saturation", "label": "Shadow Saturation", "label_ru": "Насыщенность тени", "type": "float", "min": -1, "max": 1, "default": 0.15, "group": "Color", "group_ru": "Цвет"}
+  ]
+}

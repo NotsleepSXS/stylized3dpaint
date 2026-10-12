@@ -1,0 +1,26 @@
+{
+  "id": "edge_highlight",
+  "name": "Edge Highlight",
+  "name_ru": "Подсветка граней",
+  "category": "stylize",
+  "description": "Paints light onto convex edges in one step (baked edges + curvature), with hand-painted torn breakup, optional top-edges-only and UV seam exclusion.",
+  "description_ru": "Рисует светлые грани за один шаг (запечённые грани + кривизна), с рваным рисованным краем, опцией «только верхние грани» и исключением UV-швов.",
+  "maps": ["edges", "curvature"],
+  "params": [
+    {"id": "width", "label": "Width", "label_ru": "Ширина", "type": "float", "min": 0, "max": 0.9, "default": 0.5, "group": "Edge", "group_ru": "Грань", "tip": "Lower edge-map threshold = wider highlight", "tip_ru": "Порог карты граней: больше = шире"},
+    {"id": "softness", "label": "Softness", "label_ru": "Мягкость", "type": "float", "min": 0, "max": 1, "default": 0.3, "group": "Edge", "group_ru": "Грань"},
+    {"id": "mode", "label": "Color Mode", "label_ru": "Режим цвета", "type": "enum", "options": [["color", "Color", "Цвет"], ["lighter", "Lighter than base", "Светлее основы"]], "default": 1, "group": "Color", "group_ru": "Цвет"},
+    {"id": "color", "label": "Color", "label_ru": "Цвет", "type": "color", "default": [0.95, 0.9, 0.78], "group": "Color", "group_ru": "Цвет"},
+    {"id": "lighter", "label": "Lighter by %", "label_ru": "Светлее на %", "type": "float", "min": 0, "max": 100, "default": 35, "group": "Color", "group_ru": "Цвет", "tip": "Lighter-than-base mode: raises the value (sRGB) by this percentage towards white", "tip_ru": "Режим «светлее основы»: поднимает яркость (sRGB) на этот процент к белому"},
+    {"id": "breakup", "label": "Hand-painted Breakup", "label_ru": "Рисованная рваность", "type": "float", "min": 0, "max": 1, "default": 0.45, "group": "Breakup", "group_ru": "Рваность"},
+    {"id": "breakup_scale", "label": "Breakup Scale", "label_ru": "Масштаб рваности", "type": "float", "min": 0.005, "max": 0.3, "default": 0.03, "logarithmic": true, "group": "Breakup", "group_ru": "Рваность"},
+    {"id": "only_top", "label": "Only Top Edges", "label_ru": "Только верхние грани", "type": "bool", "default": false, "group": "Filter", "group_ru": "Отбор"},
+    {"id": "exclude_seams", "label": "Exclude Seams", "label_ru": "Исключить швы", "type": "bool", "default": true, "group": "Filter", "group_ru": "Отбор", "tip": "No highlight on the texels along UV island borders", "tip_ru": "Без подсветки на текселях у границ UV-островов"},
+    {"id": "seed", "label": "Seed", "label_ru": "Сид", "type": "seed", "default": 1, "group": "Breakup", "group_ru": "Рваность"}
+  ],
+  "presets": [
+    {"name": "Thin crisp", "name_ru": "Тонкие чёткие", "values": {"width": 0.3, "softness": 0.1, "breakup": 0.2}},
+    {"name": "Hand-painted", "name_ru": "Рисованные", "values": {"width": 0.5, "softness": 0.3, "breakup": 0.45}},
+    {"name": "Wide soft", "name_ru": "Широкие мягкие", "values": {"width": 0.75, "softness": 0.7, "breakup": 0.3}}
+  ]
+}

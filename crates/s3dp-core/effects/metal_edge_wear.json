@@ -1,0 +1,42 @@
+{
+  "id": "metal_edge_wear",
+  "name": "Metal Edge Wear",
+  "name_ru": "Износ металла по граням",
+  "category": "wear",
+  "description": "Paint worn off sharp edges down to bare metal, with chips, breakup patches and scratches around the worn areas. On layer content: bright bare metal color, metallic 1, low (polished) roughness, slight height dip.",
+  "description_ru": "Краска стёрта с острых граней до голого металла: сколы, неравномерные пятна и царапины вокруг износа. На содержимом слоя: светлый металл, металличность 1, низкая (полированная) шероховатость, лёгкое углубление по высоте.",
+  "maps": ["curvature", "edges", "ambient_occlusion"],
+  "content_output": "value",
+  "params": [
+    {"id": "level", "label": "Wear Level", "label_ru": "Уровень износа", "type": "float", "min": 0, "max": 1, "default": 0.5, "group": "Wear", "group_ru": "Износ", "tip": "Amount of wear: 0 = none, 1 = almost everywhere", "tip_ru": "Количество износа: 0 — нет, 1 — почти везде"},
+    {"id": "contrast", "label": "Wear Contrast", "label_ru": "Контраст износа", "type": "float", "min": 0, "max": 1, "default": 0.5, "group": "Wear", "group_ru": "Износ", "tip": "Sharpness of the wear border", "tip_ru": "Резкость границы износа"},
+    {"id": "edge_width", "label": "Edge Width", "label_ru": "Ширина граней", "type": "float", "min": 0.001, "max": 0.1, "default": 0.01, "logarithmic": true, "group": "Wear", "group_ru": "Износ", "tip": "How far wear spreads from edges (fraction of the model size)", "tip_ru": "Насколько износ расходится от граней (доля размера модели)"},
+    {"id": "edge_smooth", "label": "Edges Smoothness", "label_ru": "Мягкость граней", "type": "float", "min": 0, "max": 1, "default": 0.3, "group": "Wear", "group_ru": "Износ", "tip": "0 = hard plateau along edges, 1 = soft averaged falloff", "tip_ru": "0 — ровная полоса вдоль граней, 1 — мягкий усреднённый спад"},
+    {"id": "curv_weight", "label": "Curvature Weight", "label_ru": "Вес кривизны", "type": "float", "min": 0, "max": 1, "default": 1.0, "group": "Wear", "group_ru": "Износ", "tip": "1 = wear follows edges, 0 = grunge only (anywhere)", "tip_ru": "1 — износ по граням, 0 — только гранж (где угодно)"},
+    {"id": "ao_mask", "label": "AO Masking", "label_ru": "Маска по AO", "type": "float", "min": 0, "max": 1, "default": 0.5, "group": "Wear", "group_ru": "Износ", "tip": "Protects occluded areas from wear", "tip_ru": "Защищает затенённые места от износа"},
+    {"id": "breakup", "label": "Breakup Amount", "label_ru": "Сила разбивки", "type": "float", "min": 0, "max": 1, "default": 0.5, "group": "Breakup", "group_ru": "Разбивка", "tip": "Large 3D noise removing wear in patches so edges are worn unevenly", "tip_ru": "Крупный 3D-шум убирает износ пятнами — грани изнашиваются неравномерно"},
+    {"id": "breakup_scale", "label": "Breakup Scale", "label_ru": "Масштаб разбивки", "type": "float", "min": 0.02, "max": 1.0, "default": 0.25, "logarithmic": true, "group": "Breakup", "group_ru": "Разбивка", "tip": "Size of the breakup patches (fraction of the model size)", "tip_ru": "Размер пятен разбивки (доля размера модели)"},
+    {"id": "loc_mode", "label": "Location Bias", "label_ru": "Смещение износа", "type": "enum", "options": [["direction", "Direction", "По направлению"], ["protrusions", "Protrusions", "Выступы"]], "default": 0, "group": "Location", "group_ru": "Расположение", "tip": "More wear towards a direction or on parts sticking out", "tip_ru": "Больше износа в заданную сторону или на выступающих частях"},
+    {"id": "loc_dir", "label": "Bias Direction", "label_ru": "Направление смещения", "type": "direction", "default": [0, -1, 0], "group": "Location", "group_ru": "Расположение", "tip": "World direction that gets more wear (down = bottom)", "tip_ru": "Мировое направление с большим износом (вниз — низ объекта)"},
+    {"id": "loc_strength", "label": "Bias Strength", "label_ru": "Сила смещения", "type": "float", "min": 0, "max": 1, "default": 0.0, "group": "Location", "group_ru": "Расположение"},
+    {"id": "chip_size", "label": "Chip Size", "label_ru": "Размер сколов", "type": "float", "min": 0.002, "max": 0.2, "default": 0.03, "logarithmic": true, "group": "Chips", "group_ru": "Сколы", "tip": "Size of individual chips (fraction of the model size)", "tip_ru": "Размер отдельных сколов (доля размера модели)"},
+    {"id": "chip_random", "label": "Chip Randomness", "label_ru": "Случайность сколов", "type": "float", "min": 0, "max": 1, "default": 0.5, "group": "Chips", "group_ru": "Сколы", "tip": "Per-chip variation and shape distortion", "tip_ru": "Разброс отдельных сколов и искажение формы"},
+    {"id": "hand_painted", "label": "Hand-painted Mode", "label_ru": "Рисованный режим", "type": "bool", "default": false, "group": "Hand-painted", "group_ru": "Рисованный стиль", "tip": "Clean hard flat shapes without noise and no height; optional colored rim", "tip_ru": "Чистые жёсткие плоские формы без шума и без высоты; цветной кант по желанию"},
+    {"id": "rim_width", "label": "Rim Width", "label_ru": "Ширина канта", "type": "float", "min": 0, "max": 1, "default": 0.0, "group": "Hand-painted", "group_ru": "Рисованный стиль", "tip": "Colored rim around chips (hand-painted mode, base color)", "tip_ru": "Цветной кант вокруг сколов (рисованный режим, базовый цвет)"},
+    {"id": "rim_light", "label": "Rim Highlight", "label_ru": "Светлый кант", "type": "color", "default": [1.0, 0.93, 0.8], "group": "Hand-painted", "group_ru": "Рисованный стиль", "tip": "Rim above the chip (lit side)", "tip_ru": "Кант над сколом (освещённая сторона)"},
+    {"id": "rim_dark", "label": "Rim Shadow", "label_ru": "Тёмный кант", "type": "color", "default": [0.12, 0.09, 0.07], "group": "Hand-painted", "group_ru": "Рисованный стиль", "tip": "Rim below the chip (shadow side)", "tip_ru": "Кант под сколом (теневая сторона)"},
+    {"id": "metal_color", "label": "Bare Metal Color", "label_ru": "Цвет металла", "type": "color", "default": [0.8, 0.8, 0.78], "group": "Metal", "group_ru": "Металл"},
+    {"id": "metal_roughness", "label": "Metal Roughness", "label_ru": "Шероховатость металла", "type": "float", "min": 0, "max": 1, "default": 0.3, "group": "Metal", "group_ru": "Металл"},
+    {"id": "polished", "label": "Polished Edge", "label_ru": "Полировка кромки", "type": "float", "min": 0, "max": 1, "default": 0.5, "group": "Metal", "group_ru": "Металл", "tip": "The most worn core is shinier and brighter", "tip_ru": "Самая стёртая часть кромки глаже и светлее"},
+    {"id": "depth", "label": "Height Dip", "label_ru": "Углубление", "type": "float", "min": 0, "max": 1, "default": 0.3, "group": "Metal", "group_ru": "Металл"},
+    {"id": "scratch_amount", "label": "Scratches Amount", "label_ru": "Количество царапин", "type": "float", "min": 0, "max": 1, "default": 0.3, "group": "Scratches", "group_ru": "Царапины"},
+    {"id": "scratch_length", "label": "Scratches Length", "label_ru": "Длина царапин", "type": "float", "min": 0.01, "max": 0.5, "default": 0.08, "logarithmic": true, "group": "Scratches", "group_ru": "Царапины", "tip": "Fraction of the model size", "tip_ru": "Доля размера модели"},
+    {"id": "scratch_dir", "label": "Scratches Direction", "label_ru": "Направление царапин", "type": "direction", "default": [1, 0, 0], "group": "Scratches", "group_ru": "Царапины", "tip": "World direction projected onto the surface", "tip_ru": "Мировое направление, спроецированное на поверхность"}
+  ],
+  "presets": [
+    {"name": "Light", "name_ru": "Лёгкий", "values": {"level": 0.35, "contrast": 0.5, "scratch_amount": 0.15}},
+    {"name": "Medium", "name_ru": "Средний", "values": {"level": 0.5, "contrast": 0.5, "scratch_amount": 0.3}},
+    {"name": "Strong", "name_ru": "Сильный", "values": {"level": 0.72, "contrast": 0.4, "edge_width": 0.025, "scratch_amount": 0.6, "breakup": 0.35}},
+    {"name": "Stylized", "name_ru": "Стилизованный", "values": {"hand_painted": true, "contrast": 1.0, "rim_width": 0.4, "breakup": 0.6, "level": 0.5, "scratch_amount": 0.0}}
+  ]
+}

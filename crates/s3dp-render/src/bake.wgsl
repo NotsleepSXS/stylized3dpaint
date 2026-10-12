@@ -17,7 +17,8 @@ struct BakeParams {
     sky: vec4<f32>,
     // x: cage front, y: cage back, z: stylized (0/1), w: has high-poly (0/1)
     cage: vec4<f32>,
-    // x: smoothing radius (world), y: scene radius, z: smooth axis (0 = x, 1 = y)
+    // x: smoothing radius (world), y: scene radius, z: smooth axis (0 = x, 1 = y),
+    // w: smoothed target (0 = maps a, 1 = maps b)
     extra: vec4<f32>,
 };
 
@@ -264,37 +265,71 @@ fn maps(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     let ao = 1.0 - occl / f32(max(ao_n, 1u));
 
-    // Edges / cavity: probe the surface shape around the point.
+    // Edges / cavity / curvature: how much the surface normal turns over a small
+    // neighbourhood. For every probe direction `t` (tangent plane of the shading normal)
+    // a nearby surface point q is found and its normal compared with ours:
+    //   s = dot(n_q - n, normalize(q - p))  (~ turning angle; > 0 convex, < 0 concave).
+    // This is symmetric for convex and concave shapes and uses interpolated normals at
+    // both ends, so faceted smooth-shaded meshes read as smooth. Radii are spread over
+    // 0.25..1 x width for a soft falloff around hard edges.
+    // (The stylized look is wider via the preset's larger width.)
     let w = P.dist.y;
     let frame = basis(n);
-    var edge = 0.0;
-    var cavity = 0.0;
+    var convex = 0.0;
+    var concave = 0.0;
     let k = max(P.counts.y, 1u);
     for (var i = 0u; i < k; i = i + 1u) {
-        let a = (f32(i) + rot.x) / f32(k) * 2.0 * PI;
+        // Fixed (not per-texel random) directions and radii: the result is then a
+        // continuous function of the surface, noise-free and identical on both sides of
+        // a UV seam, so it needs no texture-space blur.
+        let a = (f32(i) + 0.5) / f32(k) * 2.0 * PI;
+        let r = w * mix(0.25, 1.0, fract(0.5 + f32(i) * 0.6180339887));
         let t = frame * vec3<f32>(cos(a), sin(a), 0.0);
-        // A wall within reach in the tangent direction means a concave corner.
-        let wall = trace(origin, t, eps, w, false);
-        if (wall.t < MISS) {
-            cavity = cavity + (1.0 - wall.t / w);
-            continue;
+        // Look down onto the surface one radius away.
+        var s = 1.0;
+        let probe = p + t * r + n * r;
+        let ground = trace(probe, -n, 0.0, 2.0 * r, false);
+        if (ground.t < MISS) {
+            let gn = hit_normal(ground);
+            if (dot(gn, n) <= 0.0) {
+                // Started inside the mesh: the surface folds up within reach.
+                s = -1.0;
+            } else {
+                let q = probe - n * ground.t;
+                s = dot(gn - n, normalize(q - p));
+            }
         }
-        // Otherwise look down onto the surface one width away.
-        let probe = p + t * w + n * w;
-        let ground = trace(probe, -n, 0.0, 2.0 * w, false);
-        var height = -w;
-        if (ground.t < MISS) { height = w - ground.t; }
-        edge = edge + clamp(-height / w, 0.0, 1.0);
-        cavity = cavity + clamp(height / w, 0.0, 1.0);
+        // Otherwise (miss) the surface drops away by more than the radius: convex edge.
+        //
+        // A wall in the way along the triangle plane: concave corner. Rays run along the
+        // geometric plane (not the shading tangent) so they never graze the starting
+        // triangle; nearly parallel hits (gentle creases between facets) fade out
+        // smoothly in favour of the height probe, as do walls near the probe radius.
+        var tw = t;
+        if (true) {
+            let wall = trace(origin, tw, eps, r, false);
+            if (wall.t < MISS) {
+                let wn = hit_normal(wall);
+                let facing = smoothstep(0.2, 0.5, -dot(wn, tw));
+                let near = 1.0 - smoothstep(0.7, 1.0, wall.t / r);
+                s = mix(s, dot(wn - n, tw), facing * near);
+            }
+        }
+        s = clamp(s, -1.0, 1.0);
+        convex = convex + max(s, 0.0);
+        concave = concave + max(-s, 0.0);
     }
-    edge = edge / f32(k);
-    cavity = cavity / f32(k);
-    if (stylized) {
-        // Wider, softer response that reads well as a paint mask.
-        edge = smoothstep(0.0, 0.6, edge);
-        cavity = smoothstep(0.0, 0.6, cavity);
-    }
-    let curvature = clamp(0.5 + 0.5 * (edge - cavity), 0.0, 1.0);
+    convex = convex / f32(k);
+    concave = concave / f32(k);
+    // Soft, threshold-free gain: small responses stay small, strong edges saturate.
+    let gain = select(4.0, 3.0, stylized);
+    // The masks get a smooth knee (x^2 / (x + knee)) so gently curved areas stay dark
+    // while edges and creases keep their full strength; curvature stays linear.
+    let knee = 0.05;
+    let edge = 1.0 - exp(-gain * convex * convex / (convex + knee));
+    let cavity = 1.0 - exp(-gain * concave * concave / (concave + knee));
+    let bend = gain * (convex - concave);
+    let curvature = 0.5 + 0.5 * sign(bend) * (1.0 - exp(-abs(bend)));
 
     // Thickness: rays into the mesh.
     var thick = 0.0;
@@ -339,27 +374,52 @@ fn soften(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let n = textureLoad(g_nrm, xy, 0).xyz;
-    let axis = select(vec2<i32>(1, 0), vec2<i32>(0, 1), P.extra.z > 0.5);
-    // Texel footprint in world units decides the tap stride.
-    var texel_world = 0.0;
-    let nb = clamp(xy + axis, vec2<i32>(0), size - 1);
-    let nbp = textureLoad(g_pos, nb, 0);
-    if (nbp.w > 0.5) { texel_world = distance(nbp.xyz, gp.xyz); }
-    let sigma = P.extra.x;
-    let radius = 12;
-    let stride = max(1, i32(round(sigma * 2.0 / max(texel_world * f32(radius), 1e-9))));
+    // A full 2D bilateral kernel (world distance + normal similarity). A separable
+    // texture-axis blur smears along UV rows whose 3D direction changes per triangle and
+    // leaves stair-step patches, so each pass (the host runs two, one per "axis") is an
+    // isotropic 2D blur with sigma / sqrt(2): together they give sigma.
+    let sigma = P.extra.x * 0.70710678;
+    // Texel footprint in world units along each texture axis: the nearer covered
+    // neighbour (the other may sit across a UV seam).
+    var foot = vec2<f32>(1e30);
+    for (var a = 0; a < 2; a = a + 1) {
+        let axis = select(vec2<i32>(1, 0), vec2<i32>(0, 1), a == 1);
+        for (var sgn = -1; sgn <= 1; sgn = sgn + 2) {
+            let nb = clamp(xy + axis * sgn, vec2<i32>(0), size - 1);
+            let nbp = textureLoad(g_pos, nb, 0);
+            if (nbp.w > 0.5 && any(nb != xy)) { foot[a] = min(foot[a], distance(nbp.xyz, gp.xyz)); }
+        }
+    }
+    if (foot.x > 1e29) { foot.x = foot.y; }
+    if (foot.y > 1e29) { foot.y = foot.x; }
+    if (foot.x > 1e29) {
+        textureStore(s_dst, xy, center);
+        return;
+    }
+    let radius = 5;
+    let step = max(vec2<f32>(1.0), vec2<f32>(sigma * 2.0) / max(foot * f32(radius), vec2<f32>(1e-9)));
     var sum = center;
     var weight = 1.0;
-    for (var i = -radius; i <= radius; i = i + 1) {
-        if (i == 0) { continue; }
-        let q = clamp(xy + axis * i * stride, vec2<i32>(0), size - 1);
-        let qp = textureLoad(g_pos, q, 0);
-        if (qp.w < 0.5) { continue; }
-        let qn = textureLoad(g_nrm, q, 0).xyz;
-        let d = distance(qp.xyz, gp.xyz);
-        let wgt = exp(-d * d / (2.0 * sigma * sigma)) * pow(max(dot(qn, n), 0.0), 4.0);
-        sum = sum + textureLoad(s_src, q, 0) * wgt;
-        weight = weight + wgt;
+    for (var j = -radius; j <= radius; j = j + 1) {
+        for (var i = -radius; i <= radius; i = i + 1) {
+            if (i == 0 && j == 0) { continue; }
+            let q = clamp(xy + vec2<i32>(round(vec2<f32>(f32(i), f32(j)) * step)), vec2<i32>(0), size - 1);
+            let qp = textureLoad(g_pos, q, 0);
+            if (qp.w < 0.5) { continue; }
+            let qn = textureLoad(g_nrm, q, 0).xyz;
+            let d = distance(qp.xyz, gp.xyz);
+            let wgt = exp(-d * d / (2.0 * sigma * sigma)) * pow(max(dot(qn, n), 0.0), 4.0);
+            sum = sum + textureLoad(s_src, q, 0) * wgt;
+            weight = weight + wgt;
+        }
     }
-    textureStore(s_dst, xy, sum / weight);
+    var out = sum / weight;
+    // Edges / cavity (maps a: y, z) and curvature (maps b: y) are noise-free already;
+    // a texture-space blur cannot cross UV seams and would leave steps along them.
+    if (P.extra.w < 0.5) {
+        out = vec4<f32>(out.x, center.y, center.z, out.w);
+    } else {
+        out = vec4<f32>(out.x, center.y, out.z, out.w);
+    }
+    textureStore(s_dst, xy, out);
 }
