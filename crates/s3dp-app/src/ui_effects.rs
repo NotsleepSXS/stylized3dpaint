@@ -11,7 +11,7 @@ use crate::app::App;
 use crate::i18n::{pick, t};
 use crate::theme;
 use crate::ui_layers::{effect_icon, effect_picker};
-use crate::ui_panels::{chip, fit_sliders, from_color32, starts_edit, to_color32};
+use crate::ui_panels::{chip, fit_sliders, from_color32, label_width, starts_edit, to_color32};
 
 /// Accumulates whether widgets changed something and whether that starts an undo step.
 #[derive(Default)]
@@ -184,7 +184,8 @@ fn node_editor(app: &mut App, ui: &mut egui::Ui, node: &Node) {
 
 /// Editor for linear channel values (colors edited in sRGB).
 pub fn values_editor(ui: &mut egui::Ui, id: impl std::hash::Hash + std::fmt::Debug, values: &mut s3dp_core::ChannelValues, channels: s3dp_core::ChannelSet, edit: &mut Edit) {
-    fit_sliders(ui, 90.0);
+    let w = label_width(ui, channels.iter().map(|c| t(c.label())), 60.0);
+    fit_sliders(ui, w);
     egui::Grid::new(id).num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
         for c in channels.iter() {
             ui.label(t(c.label()));
@@ -486,7 +487,9 @@ fn params_editor(app: &App, ui: &mut egui::Ui, def: &EffectDef, e: &mut EffectIn
     for (group, group_ru) in groups {
         let in_group: Vec<&ParamDef> = params.iter().filter(|p| p.group == group).collect();
         let body = |ui: &mut egui::Ui| {
-            fit_sliders(ui, 110.0);
+            let labels = in_group.iter().map(|p| pick(&p.label, p.label_ru.as_deref()));
+            let w = label_width(ui, labels, 60.0);
+            fit_sliders(ui, w);
             egui::Grid::new(("params", eid, group.clone())).num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
                 for p in in_group {
                     param_row(app, ui, def, e, p, edit, node_id, drag);

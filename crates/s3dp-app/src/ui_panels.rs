@@ -31,6 +31,15 @@ pub fn fit_sliders(ui: &mut egui::Ui, label: f32) {
     ui.spacing_mut().slider_width = (ui.available_width() - label - 56.0 - 24.0).max(40.0);
 }
 
+/// Width of the widest label (body text, no wrap), at least `min`: the label column of a
+/// slider grid, so long (Russian) labels do not push the rows past the panel.
+pub fn label_width<'a>(ui: &egui::Ui, labels: impl IntoIterator<Item = &'a str>, min: f32) -> f32 {
+    labels
+        .into_iter()
+        .map(|l| egui::WidgetText::from(l).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body).size().x)
+        .fold(min, f32::max)
+}
+
 /// Square icon button; highlighted when `selected`.
 pub fn icon_button(ui: &mut egui::Ui, glyph: &str, selected: bool, tooltip: &str) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(32.0, 30.0), egui::Sense::click());
@@ -321,6 +330,20 @@ pub fn status_bar(app: &mut App, ui: &mut egui::Ui) {
 pub const DOCK_WIDTH: f32 = 350.0;
 
 pub fn dock(app: &mut App, ui: &mut egui::Ui) {
+    // Contents go into a child Ui that never grows the panel: egui sizes a right panel whose
+    // content overflows from the content's right edge, which slid the viewport over the left
+    // part of the dock. Anything too wide is clipped instead.
+    let rect = ui.max_rect();
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Min)));
+    child.set_clip_rect(rect.intersect(ui.clip_rect()));
+    dock_contents(app, &mut child);
+    if child.min_rect().width() > rect.width() + 1.0 {
+        log::debug!("dock content overflows: {:.0} > {:.0}", child.min_rect().width(), rect.width());
+    }
+    ui.advance_cursor_after_rect(rect);
+}
+
+fn dock_contents(app: &mut App, ui: &mut egui::Ui) {
     let width = DOCK_WIDTH;
     ui.set_max_width(width);
     ui.spacing_mut().item_spacing.y = 0.0;
@@ -429,5 +452,46 @@ fn project_tab(app: &mut App, ui: &mut egui::Ui) {
                 app.viewport.paint.mark_all_dirty();
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod dock_layout_tests {
+    /// Central panel rect next to a fixed 350 px right panel whose content is 530 px wide.
+    fn central_max_x(isolate: bool) -> (f32, f32) {
+        let ctx = egui::Context::default();
+        let mut out = (0.0, 0.0);
+        let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0))), ..Default::default() };
+        for _ in 0..3 {
+            let mut full = ctx.run_ui(input.clone(), |ui| {
+                let dock = egui::Panel::right("dock").exact_size(350.0).resizable(false).show(ui, |ui| {
+                    let wide = |ui: &mut egui::Ui| {
+                        ui.allocate_exact_size(egui::vec2(530.0, 20.0), egui::Sense::hover());
+                    };
+                    if isolate {
+                        let rect = ui.max_rect();
+                        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                        child.set_clip_rect(rect);
+                        wide(&mut child);
+                        ui.advance_cursor_after_rect(rect);
+                    } else {
+                        wide(ui);
+                    }
+                });
+                let central = egui::CentralPanel::default().show(ui, |ui| ui.available_rect_before_wrap());
+                out = (central.inner.max.x, dock.response.rect.min.x);
+            });
+            full.textures_delta.clear();
+        }
+        out
+    }
+
+    #[test]
+    fn overflowing_dock_does_not_slide_under_the_viewport() {
+        let (central, dock) = central_max_x(false);
+        println!("plain: central ends {central}, dock starts {dock}");
+        let (central, dock) = central_max_x(true);
+        println!("isolated: central ends {central}, dock starts {dock}");
+        assert!(central <= dock + 0.5 && dock <= 1200.0 - 349.0, "central panel overlaps the dock: {central} > {dock}");
     }
 }
