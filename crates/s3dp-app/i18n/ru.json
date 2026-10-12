@@ -278,5 +278,11 @@
  "Preview": "Превью",
  "On the model, from the viewport camera": "На модели, с камеры вьюпорта",
  "Flat texture (UV layout of the first texture set)": "Плоская текстура (развёртка первого набора текстур)",
- "Material": "Материал"
+ "Material": "Материал",
+ "The effect alone on a sample shape": "Только этот эффект на образце (шар / куб / цилиндр)",
+ "Flat texture of your model (UV layout of the first texture set)": "Плоская текстура вашей модели (развёртка первого набора текстур)",
+ "Sphere": "Шар",
+ "Cube": "Куб",
+ "Cylinder": "Цилиндр",
+ "Drag to rotate": "Тяните, чтобы вращать"
 }

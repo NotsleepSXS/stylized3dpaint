@@ -72,6 +72,8 @@ pub struct App {
     /// Properties preview texture and what it last showed (re-rendered when that changes).
     preview_tex: Option<egui::TextureId>,
     preview_key: Option<(u64, s3dp_render::Preview, [u32; 2])>,
+    /// Sample-shape scene of the effect preview (created on first use).
+    pub sample: Option<crate::ui_preview::SampleScene>,
     camera: OrbitCamera,
     pub shading: ShadingMode,
     pub mesh: Mesh,
@@ -131,6 +133,7 @@ impl App {
             viewport_tex: None,
             preview_tex: None,
             preview_key: None,
+            sample: None,
             camera: OrbitCamera::default(),
             shading: ShadingMode::default(),
             mesh: Mesh::default(),

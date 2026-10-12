@@ -9,6 +9,7 @@ mod ui_export;
 mod ui_effects;
 mod ui_layers;
 mod ui_panels;
+mod ui_preview;
 mod ui_widgets;
 
 fn main() -> eframe::Result {

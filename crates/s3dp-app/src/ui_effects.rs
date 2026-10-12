@@ -397,12 +397,22 @@ fn effect_preview(app: &mut App, ui: &mut egui::Ui, node: &Node, effect_id: u64)
     let mut uv: bool = ui.data_mut(|d| *d.get_persisted_mut_or(uv_id, false));
     egui::CollapsingHeader::new(RichText::new(format!("{} {}", icon::EYE, t("Preview"))).strong()).id_salt("effect_preview").default_open(true).show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut uv, false, "3D").on_hover_text(t("On the model, from the viewport camera"));
-            ui.selectable_value(&mut uv, true, "UV").on_hover_text(t("Flat texture (UV layout of the first texture set)"));
-            ui.label(RichText::new(if on_mask { t("Layer mask") } else { t("Material") }).small().color(theme::TEXT_FAINT));
+            ui.selectable_value(&mut uv, false, "3D").on_hover_text(t("The effect alone on a sample shape"));
+            ui.selectable_value(&mut uv, true, "UV").on_hover_text(t("Flat texture of your model (UV layout of the first texture set)"));
+            if uv {
+                ui.label(RichText::new(if on_mask { t("Layer mask") } else { t("Material") }).small().color(theme::TEXT_FAINT));
+            }
         });
-        let what = s3dp_render::Preview { mask_of: on_mask.then_some(node.id), uv, set: 0 };
-        app.preview_ui(ui, what);
+        if uv {
+            let what = s3dp_render::Preview { mask_of: on_mask.then_some(node.id), uv, set: 0 };
+            app.preview_ui(ui, what);
+        } else if let Some(e) = find_effect(node, effect_id).cloned()
+            && let Some(def) = registry().get(&e.def)
+        {
+            // How the effect works on a neutral sample shape.
+            let layer = matches!(&node.kind, NodeKind::Effect(x) if x.id == effect_id);
+            crate::ui_preview::show(app, ui, def, &e, on_mask, layer);
+        }
     });
     ui.data_mut(|d| d.insert_persisted(uv_id, uv));
 }

@@ -138,6 +138,73 @@ impl Mesh {
         mesh
     }
 
+    /// Unit cube with sharp edges; faces laid out in a 3x2 UV atlas (sample mesh for previews).
+    pub fn cube() -> Mesh {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        // (normal, u axis, v axis) per face.
+        let faces = [
+            (Vec3::X, Vec3::NEG_Z, Vec3::NEG_Y),
+            (Vec3::NEG_X, Vec3::Z, Vec3::NEG_Y),
+            (Vec3::Y, Vec3::X, Vec3::Z),
+            (Vec3::NEG_Y, Vec3::X, Vec3::NEG_Z),
+            (Vec3::Z, Vec3::X, Vec3::NEG_Y),
+            (Vec3::NEG_Z, Vec3::NEG_X, Vec3::NEG_Y),
+        ];
+        let pad = 0.02;
+        for (f, (n, u, v)) in faces.iter().enumerate() {
+            let (col, row) = ((f % 3) as f32, (f / 3) as f32);
+            let cell = |a: f32, b: f32| Vec2::new((col + pad + a * (1.0 - 2.0 * pad)) / 3.0, (row + pad + b * (1.0 - 2.0 * pad)) / 2.0);
+            let base = vertices.len() as u32;
+            for (a, b) in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)] {
+                let pos = *n * 0.7 + *u * (a * 1.4 - 0.7) + *v * (b * 1.4 - 0.7);
+                vertices.push(Vertex { position: pos.into(), normal: (*n).into(), uv: cell(a, b).into(), tangent: [0.0; 4] });
+            }
+            indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+        Self::sample("Cube", vertices, indices)
+    }
+
+    /// Cylinder (radius 0.6, height 1.4) with caps; side in the top half of the UV square,
+    /// caps as discs in the bottom half (sample mesh for previews).
+    pub fn cylinder(segments: u32) -> Mesh {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        let (r, h) = (0.6f32, 0.7f32);
+        for s in 0..=segments {
+            let u = s as f32 / segments as f32;
+            let a = u * std::f32::consts::TAU;
+            let n = Vec3::new(a.cos(), 0.0, a.sin());
+            for (y, v) in [(h, 0.02f32), (-h, 0.48)] {
+                vertices.push(Vertex { position: (n * r + Vec3::Y * y).into(), normal: n.into(), uv: [u, v], tangent: [0.0; 4] });
+            }
+        }
+        for s in 0..segments {
+            let i = s * 2;
+            indices.extend_from_slice(&[i, i + 2, i + 1, i + 1, i + 2, i + 3]);
+        }
+        for (y, n, cu) in [(h, Vec3::Y, 0.25f32), (-h, Vec3::NEG_Y, 0.75)] {
+            let center = vertices.len() as u32;
+            vertices.push(Vertex { position: (Vec3::Y * y).into(), normal: n.into(), uv: [cu, 0.75], tangent: [0.0; 4] });
+            for s in 0..=segments {
+                let a = s as f32 / segments as f32 * std::f32::consts::TAU;
+                let (c, sn) = (a.cos(), a.sin());
+                vertices.push(Vertex { position: [c * r, y, sn * r], normal: n.into(), uv: [cu + c * 0.23, 0.75 + sn * 0.23], tangent: [0.0; 4] });
+            }
+            for s in 0..segments {
+                indices.extend_from_slice(&[center, center + 1 + s, center + 2 + s]);
+            }
+        }
+        Self::sample("Cylinder", vertices, indices)
+    }
+
+    fn sample(name: &str, vertices: Vec<Vertex>, indices: Vec<u32>) -> Mesh {
+        let index_count = indices.len() as u32;
+        let mut mesh = Mesh { name: name.into(), vertices, indices, parts: vec![MeshPart { name: "default".into(), first_index: 0, index_count }] };
+        mesh.compute_tangents();
+        mesh
+    }
+
     /// Generates MikkTSpace tangents (matching Blender/Unreal/Unity bakers) and re-welds.
     /// Triangle order is preserved, so part index ranges stay valid.
     pub fn compute_tangents(&mut self) {
@@ -174,5 +241,21 @@ impl Mesh {
         self.indices = (0..out.len() as u32).collect();
         self.vertices = out;
         self.weld();
+    }
+}
+
+#[cfg(test)]
+mod sample_mesh_tests {
+    use super::*;
+
+    #[test]
+    fn sample_meshes_are_valid() {
+        for m in [Mesh::cube(), Mesh::cylinder(32), Mesh::uv_sphere(16, 8)] {
+            assert!(m.has_uvs() && m.triangle_count() > 0, "{}", m.name);
+            assert!(m.indices.iter().all(|i| (*i as usize) < m.vertices.len()), "{}", m.name);
+            assert!(m.vertices.iter().all(|v| v.uv.iter().all(|c| (0.0..=1.0).contains(c))), "{}: UVs in 0..1", m.name);
+            let r = m.bounds().radius();
+            assert!(r > 0.5 && r < 2.0, "{}: about unit size ({r})", m.name);
+        }
     }
 }
