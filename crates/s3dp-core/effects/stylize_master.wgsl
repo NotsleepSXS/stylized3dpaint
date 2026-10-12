@@ -137,6 +137,65 @@ fn sm_contrast(v: f32, k: f32) -> f32 { return smoothstep(0.25 * k, 1.0 - 0.6 * 
 
 // ---------------------------------------------------------------- main
 
+/// Non-color channels (ids: 1 roughness, 2 metallic, 3 normal, 4 height, 5 AO, 6 emissive,
+/// 7 opacity, 8+ user): stroke averaging + relief / variation, edges & cavities, crisp metal,
+/// roughness bands, lighting occlusion into AO.
+fn sm_material_channel(c: Ctx, v_in: vec4<f32>, ch: u32, gs: f32, ec_on: f32) -> vec4<f32> {
+    var v = v_in;
+    let scalar = ch != 3u && ch != 6u;
+    // Brush strokes: each stroke averages the channel under it (painterly flat plates).
+    let st_br = gs * p_br_strength() * p_ch_strokes();
+    if (st_br > 0.0 && ch != 7u) {
+        let so = sm_strokes(c);
+        if (so.col.a > 0.0) {
+            var mean = so.col.rgb / so.col.a;
+            let jit = so.jit.x / so.col.a;
+            if (ch == 3u) { mean = normalize(mean * 2.0 - 1.0 + vec3<f32>(0.0, 0.0, 1e-4)) * 0.5 + 0.5; }
+            if (ch == 1u) { mean = mean + vec3<f32>(jit * p_br_rough_var()); }
+            if (ch == 4u) { mean = mean + vec3<f32>(jit * p_br_height() * 0.5); }
+            v = vec4<f32>(mix(v.rgb, mean, clamp(so.jit.z, 0.0, 1.0) * st_br), v.a);
+        }
+    }
+    // Edges & cavities.
+    if (ec_on > 0.0 && (ch == 1u || ch == 2u || ch == 4u || ch == 5u)) {
+        let ek = sm_edge_cav(c);
+        let mode = p_ec_mode();
+        let e = select(0.0, sm_contrast(ek.x, p_ec_edge_contrast()) * p_ec_edge_op(), mode != 1) * ec_on;
+        let k = select(0.0, sm_contrast(ek.y, p_ec_cav_contrast()) * p_ec_cav_op(), mode != 0) * ec_on;
+        var x = v.r;
+        switch ch {
+            case 1u: { x = x - e * p_ec_rough_edge() + k * p_ec_rough_cav(); }
+            case 2u: { x = x + e * p_ec_metal_edge(); }
+            case 4u: { x = x + (e * p_ec_height_edge() - k * p_ec_height_cav()) * 0.15; }
+            default: { x = x * (1.0 - k * p_ec_ao_cav()); }
+        }
+        v = vec4<f32>(vec3<f32>(x), v.a);
+    }
+    // Crisp metal.
+    if (ch == 2u && p_mt_crisp() > 0.0) {
+        let s = mix(0.5, 0.02, p_mt_crisp());
+        v = vec4<f32>(vec3<f32>(mix(v.r, smoothstep(0.5 - s, 0.5 + s, v.r), gs)), v.a);
+    }
+    // Roughness bands.
+    let bands = p_rough_bands();
+    if (ch == 1u && bands > 1) {
+        let n = f32(bands - 1);
+        v = vec4<f32>(vec3<f32>(mix(v.r, round(clamp(v.r, 0.0, 1.0) * n) / n, gs)), v.a);
+    }
+    // Baked-lighting occlusion into AO.
+    let st_bl = gs * p_bl_strength() * p_bl_ao();
+    if (ch == 5u && st_bl > 0.0) {
+        let occl = ao(c.xy) * mix(1.0, sky(c.xy), 0.5);
+        v = vec4<f32>(vec3<f32>(v.r * mix(1.0, occl, st_bl)), v.a);
+    }
+    if (ch == 3u) {
+        // Averaged / smoothed normals: back to unit length.
+        return vec4<f32>(normalize(v.rgb * 2.0 - 1.0 + vec3<f32>(0.0, 0.0, 1e-4)) * 0.5 + 0.5, v.a);
+    }
+    if (scalar) { return vec4<f32>(clamp(v.rgb, vec3<f32>(0.0), vec3<f32>(1.0)), v.a); }
+    return v;
+}
+
 fn effect(c: Ctx) -> vec4<f32> {
     let gs = clamp(p_strength(), 0.0, 1.0);
     var v = c.src;
@@ -148,16 +207,7 @@ fn effect(c: Ctx) -> vec4<f32> {
     if (is_mask()) { return v; }
     let ch = channel();
     let ec_on = gs * p_ec_strength();
-    if (ch == 1u && ec_on > 0.0) {
-        // Roughness: worn edges a little smoother, cavities a little rougher.
-        let ek = sm_edge_cav(c);
-        let mode = p_ec_mode();
-        let e = select(0.0, sm_contrast(ek.x, p_ec_edge_contrast()) * p_ec_edge_op(), mode != 1);
-        let k = select(0.0, sm_contrast(ek.y, p_ec_cav_contrast()) * p_ec_cav_op(), mode != 0);
-        let r = clamp(v.r - 0.1 * e * ec_on + 0.08 * k * ec_on, 0.0, 1.0);
-        return vec4<f32>(vec3<f32>(r), v.a);
-    }
-    if (ch != 0u) { return v; }
+    if (ch != 0u) { return sm_material_channel(c, v, ch, gs, ec_on); }
     var col = v.rgb;
 
     // Brush strokes.

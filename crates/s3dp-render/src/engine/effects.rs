@@ -18,7 +18,7 @@ pub const CONTENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float
 /// Mask buffers: value in r.
 pub const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 
-const PARAM_SLOTS: usize = 48;
+const PARAM_SLOTS: usize = 64;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]

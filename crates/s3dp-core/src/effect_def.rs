@@ -455,7 +455,7 @@ mod tests {
         let r = registry();
         assert!(!r.effects.is_empty());
         for d in &r.effects {
-            assert!(d.shader_params().len() <= 48, "{}: too many parameters", d.id);
+            assert!(d.shader_params().len() <= 64, "{}: too many parameters", d.id);
             assert!(d.wgsl.contains("fn effect("), "{}: shader must define fn effect", d.id);
             let ids: std::collections::HashSet<_> = d.all_params().iter().map(|p| p.id.clone()).collect();
             assert_eq!(ids.len(), d.all_params().len(), "{}: duplicate parameter ids", d.id);

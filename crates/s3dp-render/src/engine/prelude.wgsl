@@ -16,7 +16,7 @@
 // ============================================================================================
 
 struct Uniforms {
-    params: array<vec4<f32>, 48>,
+    params: array<vec4<f32>, 64>,
     // x: channel id, y: channel is color (0/1), z: target (0 content, 1 mask), w: generator (0/1)
     info: vec4<u32>,
     // x: blend mode, y: opacity, z: anchor0 bound, w: anchor1 bound
