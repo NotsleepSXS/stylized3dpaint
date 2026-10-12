@@ -259,6 +259,7 @@ impl App {
                 self.mesh = mesh;
                 self.needs_frame = true;
                 self.thumbs.clear();
+                self.layers_ui.reset_for(&self.viewport.paint.doc);
                 self.project_path = Some(path.to_owned());
                 self.saved_revision = self.viewport.paint.revision();
                 let missing = self.viewport.paint.missing_effects();

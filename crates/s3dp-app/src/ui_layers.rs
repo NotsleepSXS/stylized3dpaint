@@ -39,6 +39,23 @@ pub struct LayersUi {
     visible: Vec<u64>,
 }
 
+impl LayersUi {
+    /// Fresh panel state for a newly opened document: no selection, effect lists of layers
+    /// that have effects expanded (shows what each effect is attached to).
+    pub fn reset_for(&mut self, doc: &s3dp_core::Document) {
+        self.selection.clear();
+        self.anchor = None;
+        self.renaming = None;
+        self.dragging = None;
+        self.open_effects.clear();
+        doc.visit(|n| {
+            if !n.effects.is_empty() || n.mask.as_ref().is_some_and(|m| m.items.iter().any(|i| matches!(i.kind, MaskItemKind::Effect(_)))) {
+                self.open_effects.insert(n.id);
+            }
+        });
+    }
+}
+
 impl App {
     /// Selected layers: the multi-selection when it holds the active node, else just the active one.
     pub fn selected_layers(&self) -> Vec<u64> {
@@ -509,14 +526,27 @@ fn node_row(app: &mut App, ui: &mut egui::Ui, node: &Node, depth: usize, actions
     }
 
     // Effects toggle on the right.
-    let effect_count = node.effects.len() + node.mask.as_ref().map_or(0, |m| m.items.iter().filter(|i| matches!(i.kind, MaskItemKind::Effect(_))).count());
+    let content_fx = node.effects.len();
+    let mask_fx = node.mask.as_ref().map_or(0, |m| m.items.iter().filter(|i| matches!(i.kind, MaskItemKind::Effect(_))).count());
     let mut name_right = rect.right() - 6.0;
-    if effect_count > 0 {
+    if content_fx + mask_fx > 0 {
         let open = app.layers_ui.open_effects.contains(&node.id);
-        let r = egui::Rect::from_min_size(egui::pos2(rect.right() - 34.0, rect.top()), egui::vec2(30.0, ROW_HEIGHT));
-        let glyph = if open { icon::CARET_UP } else { icon::SPARKLE };
-        painter.text(r.center(), egui::Align2::CENTER_CENTER, format!("{glyph}{effect_count}"), egui::FontId::proportional(11.0), theme::TEXT_DIM);
-        if ui.interact(r, ui.id().with(("fx", node.id)), Sense::click()).on_hover_text(t("Show / hide effects")).clicked() {
+        // "✦2 ◧1": effects on the layer / on the mask.
+        let mut label = String::new();
+        if content_fx > 0 {
+            label += &format!("{}{content_fx}", icon::SPARKLE);
+        }
+        if mask_fx > 0 {
+            label += &format!("{}{}{mask_fx}", if label.is_empty() { "" } else { " " }, icon::SQUARE_HALF);
+        }
+        if open {
+            label = format!("{} {label}", icon::CARET_UP);
+        }
+        let w = egui::WidgetText::from(label.as_str()).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::FontId::proportional(11.0)).size().x + 8.0;
+        let r = egui::Rect::from_min_size(egui::pos2(rect.right() - 4.0 - w, rect.top()), egui::vec2(w, ROW_HEIGHT));
+        painter.text(r.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(11.0), theme::TEXT_DIM);
+        let tip = format!("{} · {}: {content_fx} · {}: {mask_fx}", t("Show / hide effects"), t("On the layer"), t("On the mask"));
+        if ui.interact(r, ui.id().with(("fx", node.id)), Sense::click()).on_hover_text(tip).clicked() {
             actions.push(Action::ToggleEffectsList(node.id));
         }
         name_right = r.left() - 2.0;
@@ -607,10 +637,16 @@ fn node_row(app: &mut App, ui: &mut egui::Ui, node: &Node, depth: usize, actions
     rect
 }
 
-/// Small rows listing a node's content effects and mask items.
+/// Small rows listing a node's effects in two branches: content effects hang under the content
+/// thumbnail ("On the layer"), mask effects under the mask thumbnail ("On the mask"), each
+/// with a header and a guide line, so it is clear what an effect is attached to.
 fn effect_rows(app: &mut App, ui: &mut egui::Ui, node: &Node, depth: usize, actions: &mut Vec<Action>) {
     let selected = app.viewport.paint.selected_effect;
-    let mut row = |ui: &mut egui::Ui, e: &EffectInstance, on_mask: bool| {
+    // Same columns as `node_row`: eye, indent, folder caret, content thumbnail, mask thumbnail.
+    let left = ui.max_rect().left();
+    let content_x = left + EYE_WIDTH + 4.0 + depth as f32 * INDENT + if node.is_folder() { 16.0 } else { 0.0 };
+    let mask_x = content_x + THUMB + 4.0;
+    let mut row = |ui: &mut egui::Ui, e: &EffectInstance, column: f32, color: Color32, last: bool| {
         let width = ui.available_width();
         let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, SUB_ROW), Sense::click());
         let painter = ui.painter_at(rect);
@@ -620,15 +656,19 @@ fn effect_rows(app: &mut App, ui: &mut egui::Ui, node: &Node, depth: usize, acti
         } else if resp.hovered() {
             painter.rect_filled(rect, 0.0, theme::HOVER.gamma_multiply(0.4));
         }
-        let x = rect.left() + EYE_WIDTH + 18.0 + depth as f32 * INDENT;
+        // Guide: vertical line from the thumbnail column, tick to the row.
+        let gx = column + THUMB / 2.0;
+        let bottom = if last { rect.center().y } else { rect.bottom() };
+        painter.line_segment([egui::pos2(gx, rect.top()), egui::pos2(gx, bottom)], egui::Stroke::new(1.5, color));
+        painter.line_segment([egui::pos2(gx, rect.center().y), egui::pos2(gx + 8.0, rect.center().y)], egui::Stroke::new(1.5, color));
+        let x = gx + 12.0;
         let def = registry().get(&e.def);
         let glyph = def.map_or(icon::QUESTION, |d| effect_icon(d.category));
         let name = e.name.clone().unwrap_or_else(|| def.map_or(e.def.clone(), |d| d.display_name(crate::i18n::is_russian()).to_owned()));
         let error = app.viewport.paint.errors.contains_key(&e.id) || def.is_none();
-        let color = if error { theme::DANGER } else if e.enabled { theme::TEXT } else { theme::TEXT_FAINT };
-        let place = if on_mask { icon::SQUARE_HALF } else { "" };
+        let text_color = if error { theme::DANGER } else if e.enabled { theme::TEXT } else { theme::TEXT_FAINT };
         let anchor = if e.anchor { format!(" {}", icon::ANCHOR) } else { String::new() };
-        painter.text(egui::pos2(x, rect.center().y), egui::Align2::LEFT_CENTER, format!("{place}{glyph} {name}{anchor}"), egui::FontId::proportional(11.5), color);
+        painter.text(egui::pos2(x, rect.center().y), egui::Align2::LEFT_CENTER, format!("{glyph} {name}{anchor}"), egui::FontId::proportional(11.5), text_color);
         let eye = egui::Rect::from_min_size(egui::pos2(rect.right() - 24.0, rect.top()), egui::vec2(22.0, SUB_ROW));
         painter.text(eye.center(), egui::Align2::CENTER_CENTER, if e.enabled { icon::EYE } else { icon::EYE_SLASH }, egui::FontId::proportional(12.0), theme::TEXT_FAINT);
         if ui.interact(eye, ui.id().with(("fxeye", e.id)), Sense::click()).clicked() {
@@ -657,14 +697,33 @@ fn effect_rows(app: &mut App, ui: &mut egui::Ui, node: &Node, depth: usize, acti
             }
         });
     };
-    for e in node.effects.iter().rev() {
-        row(ui, e, false);
+    let header = |ui: &mut egui::Ui, column: f32, glyph: &str, text: &str, color: Color32| {
+        let width = ui.available_width();
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 16.0), Sense::hover());
+        let painter = ui.painter_at(rect);
+        let gx = column + THUMB / 2.0;
+        painter.line_segment([egui::pos2(gx, rect.top()), egui::pos2(gx, rect.bottom())], egui::Stroke::new(1.5, color));
+        painter.text(egui::pos2(gx + 6.0, rect.center().y), egui::Align2::LEFT_CENTER, format!("{glyph} {text}"), egui::FontId::proportional(10.5), color);
+    };
+    let content: Vec<&EffectInstance> = node.effects.iter().rev().collect();
+    let mask: Vec<&EffectInstance> = node
+        .mask
+        .iter()
+        .flat_map(|m| m.items.iter().rev())
+        .filter_map(|i| if let MaskItemKind::Effect(e) = &i.kind { Some(e) } else { None })
+        .collect();
+    let content_color = theme::ACCENT;
+    let mask_color = Color32::from_gray(190);
+    if !content.is_empty() {
+        header(ui, content_x, icon::IMAGE_SQUARE, t("On the layer"), content_color);
+        for (i, e) in content.iter().enumerate() {
+            row(ui, e, content_x, content_color, i + 1 == content.len());
+        }
     }
-    if let Some(mask) = &node.mask {
-        for item in mask.items.iter().rev() {
-            if let MaskItemKind::Effect(e) = &item.kind {
-                row(ui, e, true);
-            }
+    if !mask.is_empty() {
+        header(ui, mask_x, icon::SQUARE_HALF, t("On the mask"), mask_color);
+        for (i, e) in mask.iter().enumerate() {
+            row(ui, e, mask_x, mask_color, i + 1 == mask.len());
         }
     }
 }

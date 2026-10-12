@@ -611,4 +611,38 @@ mod tests {
         assert_eq!(before, finals(&vp2, &device, &queue), "composited maps must match after reload");
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    /// Writes a small demo project (fill with content + mask effects, a folder) to `$S3DP_DEMO`
+    /// for UI screenshots. `cargo test -p stylized3dpaint demo_project -- --ignored`.
+    #[test]
+    #[ignore]
+    fn demo_project() {
+        let Some(path) = std::env::var_os("S3DP_DEMO").map(std::path::PathBuf::from) else { return };
+        let Some((device, queue)) = device() else { return };
+        let mesh = Mesh::uv_sphere(48, 24);
+        let mut vp = Viewport::new(&device);
+        vp.paint.throttle = false;
+        vp.set_mesh(&device, &queue, &mesh, 256);
+        let mut v = ChannelValues::defaults();
+        v.set(ChannelId::BaseColor, [0.7, 0.2, 0.1]);
+        let fill = vp.paint.add_node(NodeKind::Fill(v), |_, _| {});
+        for id in ["hue_shift_by_light", "edge_highlight"] {
+            let e = vp.paint.new_effect(id).unwrap();
+            vp.paint.edit_node(fill, false, |n| n.effects.push(e));
+        }
+        vp.paint.add_mask(fill, true);
+        let e = vp.paint.new_effect("noise").unwrap();
+        let item = vp.paint.new_id();
+        vp.paint.edit_node(fill, false, |n| {
+            n.mask.as_mut().unwrap().items.push(s3dp_core::MaskItem { id: item, enabled: true, opacity: 1.0, blend: BlendMode::Multiply, kind: s3dp_core::MaskItemKind::Effect(e) })
+        });
+        let folder = vp.paint.add_node(NodeKind::Folder { expanded: true }, |_, _| {});
+        let mut v2 = ChannelValues::defaults();
+        v2.set(ChannelId::BaseColor, [0.2, 0.4, 0.8]);
+        let inner = vp.paint.add_node(NodeKind::Fill(v2), |_, _| {});
+        vp.paint.move_node(inner, Some(folder), 0);
+        let e = vp.paint.new_effect("posterize").unwrap();
+        vp.paint.edit_node(inner, false, |n| n.effects.push(e));
+        save(&path, &mesh, &vp, None, &device, &queue).unwrap();
+    }
 }

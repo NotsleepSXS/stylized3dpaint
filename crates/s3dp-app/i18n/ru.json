@@ -255,5 +255,7 @@
  "Make anchor": "Сделать якорем",
  "Group the selected layers into a folder (Ctrl+G)": "Сгруппировать выделенные слои в папку (Ctrl+G)",
  "New folder (with several layers selected: group them)": "Новая папка (если выделено несколько слоёв — сгруппировать их)",
- "Add effect… (to every selected layer or its mask)": "Добавить эффект… (всем выделенным слоям или их маскам)"
+ "Add effect… (to every selected layer or its mask)": "Добавить эффект… (всем выделенным слоям или их маскам)",
+ "On the layer": "На слое",
+ "On the mask": "На маске"
 }
