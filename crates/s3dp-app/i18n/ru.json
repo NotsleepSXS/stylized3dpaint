@@ -261,5 +261,18 @@
  "Viewport": "Вьюпорт",
  "Window": "Окно",
  "Reset panel layout": "Сбросить раскладку панелей",
- "Drag a panel tab to move it; drag the gaps between panels to resize.": "Тяните вкладку панели, чтобы переместить её; тяните промежутки между панелями, чтобы менять размер."
+ "Drag a panel tab to move it; drag the gaps between panels to resize.": "Тяните вкладку панели, чтобы переместить её; тяните промежутки между панелями, чтобы менять размер.",
+ "Aim in viewport": "Навести во вьюпорте",
+ "Input": "Вход",
+ "Output": "Выход",
+ "Stop position": "Позиция точки",
+ "Add a stop": "Добавить точку",
+ "Remove the last stop": "Убрать последнюю точку",
+ "Midtones (gamma)": "Полутона (гамма)",
+ "Drag to aim · Shift: back side": "Тяните, чтобы навести · Shift: обратная сторона",
+ "In Black": "Вход: чёрный",
+ "Gamma": "Гамма",
+ "In White": "Вход: белый",
+ "Out Black": "Выход: чёрный",
+ "Out White": "Выход: белый"
 }

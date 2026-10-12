@@ -190,8 +190,54 @@ pub struct EffectDef {
     /// Named parameter presets (spec: Light / Medium / Strong / Stylized).
     #[serde(default)]
     pub presets: Vec<Preset>,
+    /// Graphical editors over existing parameters (gradient, levels, range); the parameters
+    /// they own are drawn by the widget instead of as rows.
+    #[serde(default)]
+    pub widgets: Vec<WidgetDef>,
     #[serde(skip)]
     pub wgsl: String,
+}
+
+/// A graphical parameter editor. Every field names a parameter id of the effect.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WidgetDef {
+    /// Color stops on a bar. With `positions`: draggable stops (kept ascending); without:
+    /// palette swatches. `count` (int) is the number of stops in use.
+    Gradient {
+        colors: Vec<String>,
+        #[serde(default)]
+        positions: Vec<String>,
+        #[serde(default)]
+        count: Option<String>,
+        /// Interpolation enum (0 linear, 1 smooth, 2 constant) for the preview.
+        #[serde(default)]
+        interp: Option<String>,
+    },
+    /// Levels curve with input / output range handles and gamma.
+    Levels { in_black: String, in_white: String, gamma: String, out_black: String, out_white: String },
+    /// Two floats edited with one double-handled slider.
+    Range {
+        min: String,
+        max: String,
+        #[serde(default)]
+        label: Option<String>,
+        #[serde(default)]
+        label_ru: Option<String>,
+    },
+}
+
+impl WidgetDef {
+    /// Parameter ids the widget edits.
+    pub fn params(&self) -> Vec<&str> {
+        match self {
+            WidgetDef::Gradient { colors, positions, count, interp } => {
+                colors.iter().chain(positions).map(String::as_str).chain(count.as_deref()).chain(interp.as_deref()).collect()
+            }
+            WidgetDef::Levels { in_black, in_white, gamma, out_black, out_white } => vec![in_black, in_white, gamma, out_black, out_white],
+            WidgetDef::Range { min, max, .. } => vec![min, max],
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -413,6 +459,11 @@ mod tests {
             assert!(d.wgsl.contains("fn effect("), "{}: shader must define fn effect", d.id);
             let ids: std::collections::HashSet<_> = d.all_params().iter().map(|p| p.id.clone()).collect();
             assert_eq!(ids.len(), d.all_params().len(), "{}: duplicate parameter ids", d.id);
+            for w in &d.widgets {
+                for p in w.params() {
+                    assert!(ids.contains(p), "{}: widget refers to unknown parameter {p}", d.id);
+                }
+            }
         }
     }
 }

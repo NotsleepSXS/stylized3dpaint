@@ -18,5 +18,6 @@
     {"id": "dither", "label": "Dither", "label_ru": "Дизеринг", "type": "bool", "default": false, "group": "Dither", "group_ru": "Дизеринг"},
     {"id": "dither_scale", "label": "Dither Scale", "label_ru": "Масштаб дизеринга", "type": "float", "min": 0.001, "max": 0.05, "default": 0.004, "logarithmic": true, "group": "Dither", "group_ru": "Дизеринг", "tip": "Dither cell size relative to the object", "tip_ru": "Размер ячейки дизеринга относительно объекта"},
     {"id": "seed", "label": "Seed", "label_ru": "Сид", "type": "seed", "default": 1, "group": "Dither", "group_ru": "Дизеринг"}
-  ]
+  ],
+  "widgets": [{"type": "gradient", "colors": ["c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8"], "count": "count"}]
 }

@@ -270,5 +270,6 @@
     "t3": 0.7
    }
   }
- ]
+ ],
+  "widgets": [{"type": "gradient", "colors": ["c1", "c2", "c3", "c4", "c5"], "positions": ["t1", "t2", "t3", "t4", "t5"], "count": "count", "interp": "interp"}]
 }

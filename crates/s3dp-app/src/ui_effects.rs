@@ -4,7 +4,7 @@
 
 use egui::RichText;
 use egui_phosphor::regular as icon;
-use s3dp_core::effect_def::{EffectDef, ParamDef, ParamKind, Target};
+use s3dp_core::effect_def::{EffectDef, ParamDef, ParamKind, Target, WidgetDef};
 use s3dp_core::{BlendMode, ChannelId, EffectInstance, MaskItem, MaskItemKind, Node, NodeKind, ParamValue, registry};
 
 use crate::app::App;
@@ -484,9 +484,25 @@ fn params_editor(app: &App, ui: &mut egui::Ui, def: &EffectDef, e: &mut EffectIn
         }
     }
     let eid = e.id;
+    // Parameters drawn by a graphical widget (gradient, levels, range) are not rows.
+    let owned: std::collections::HashSet<&str> = def.widgets.iter().flat_map(|w| w.params()).collect();
     for (group, group_ru) in groups {
-        let in_group: Vec<&ParamDef> = params.iter().filter(|p| p.group == group).collect();
+        let in_group: Vec<&ParamDef> = params.iter().filter(|p| p.group == group && !owned.contains(p.id.as_str())).collect();
+        // A widget sits in the group of its first parameter.
+        let widgets: Vec<(usize, &WidgetDef)> = def
+            .widgets
+            .iter()
+            .enumerate()
+            .filter(|(_, w)| w.params().first().and_then(|id| params.iter().find(|p| p.id == *id)).is_some_and(|p| p.group == group))
+            .collect();
         let body = |ui: &mut egui::Ui| {
+            for (i, w) in &widgets {
+                widget(ui, def, e, *i, w, edit);
+                ui.add_space(4.0);
+            }
+            if in_group.is_empty() {
+                return;
+            }
             let labels = in_group.iter().map(|p| pick(&p.label, p.label_ru.as_deref()));
             let w = label_width(ui, labels, 60.0);
             fit_sliders(ui, w);
@@ -505,6 +521,77 @@ fn params_editor(app: &App, ui: &mut egui::Ui, def: &EffectDef, e: &mut EffectIn
                 egui::CollapsingHeader::new(RichText::new(title).strong()).id_salt(("group", eid, g)).default_open(open).show(ui, |ui| body(ui));
             }
             None => body(ui),
+        }
+    }
+}
+
+/// A graphical editor over some of the effect's parameters (see `WidgetDef`).
+fn widget(ui: &mut egui::Ui, def: &EffectDef, e: &mut EffectInstance, index: usize, w: &WidgetDef, edit: &mut Edit) {
+    use crate::ui_widgets as uw;
+    let params = def.all_params();
+    let find = |id: &str| params.iter().find(|p| p.id == id);
+    let get = |e: &EffectInstance, id: &str| find(id).map(|p| def.value(e, p));
+    let float = |e: &EffectInstance, id: &str| get(e, id).map_or(0.0, |v| v.as_f32());
+    let id = egui::Id::new(("fx_widget", e.id, index));
+    match w {
+        WidgetDef::Gradient { colors, positions, count, interp } => {
+            let mut stops: Vec<uw::Stop> = colors
+                .iter()
+                .enumerate()
+                .map(|(i, c)| uw::Stop {
+                    color: match get(e, c) {
+                        Some(ParamValue::Color(v)) => v,
+                        _ => [0.5; 3],
+                    },
+                    pos: positions.get(i).map(|p| float(e, p)),
+                })
+                .collect();
+            let mut n = count.as_deref().map(|c| float(e, c) as i32);
+            let limits = count.as_deref().and_then(find).map_or((1, colors.len() as i32), |p| match p.kind {
+                ParamKind::Int { min, max, .. } => (min, max.min(colors.len() as i32)),
+                _ => (1, colors.len() as i32),
+            });
+            let mode = interp.as_deref().map_or(0, |i| float(e, i) as u32);
+            let resp = uw::gradient(ui, id, &mut stops, n.as_mut().map(|c| (c, limits.0, limits.1)), mode);
+            edit.note(&resp);
+            if resp.changed() {
+                for (i, s) in stops.iter().enumerate() {
+                    e.params.insert(colors[i].clone(), ParamValue::Color(s.color));
+                    if let (Some(pid), Some(v)) = (positions.get(i), s.pos) {
+                        e.params.insert(pid.clone(), ParamValue::Float(v));
+                    }
+                }
+                if let (Some(c), Some(v)) = (count, n) {
+                    e.params.insert(c.clone(), ParamValue::Int(v));
+                }
+            }
+        }
+        WidgetDef::Levels { in_black, in_white, gamma, out_black, out_white } => {
+            let ids = [in_black, in_white, gamma, out_black, out_white];
+            let mut v = ids.map(|i| float(e, i));
+            let resp = uw::levels(ui, id, &mut v);
+            edit.note(&resp);
+            if resp.changed() {
+                for (pid, val) in ids.iter().zip(v) {
+                    e.params.insert((*pid).clone(), ParamValue::Float(val));
+                }
+            }
+        }
+        WidgetDef::Range { min, max, label, label_ru } => {
+            if let Some(l) = label.as_deref() {
+                ui.label(pick(l, label_ru.as_deref()));
+            }
+            let (lo_lim, hi_lim) = find(min).map_or((0.0, 1.0), |p| match p.kind {
+                ParamKind::Float { min, max, .. } => (min, max),
+                _ => (0.0, 1.0),
+            });
+            let (mut lo, mut hi) = (float(e, min), float(e, max));
+            let resp = uw::range(ui, id, &mut lo, &mut hi, lo_lim, hi_lim, true, [theme::TEXT_DIM, theme::TEXT]);
+            edit.note(&resp);
+            if resp.changed() {
+                e.params.insert(min.clone(), ParamValue::Float(lo));
+                e.params.insert(max.clone(), ParamValue::Float(hi));
+            }
         }
     }
 }
@@ -559,25 +646,34 @@ fn param_row(app: &App, ui: &mut egui::Ui, def: &EffectDef, e: &mut EffectInstan
         }
         (ParamKind::Direction { .. }, ParamValue::Vec3(d)) => {
             let active = drag.as_ref().is_some_and(|(_, eid, pid)| *eid == e.id && *pid == p.id);
-            let dir = glam::Vec3::from(*d).normalize_or(glam::Vec3::Y);
-            let mut elevation = dir.y.clamp(-1.0, 1.0).asin().to_degrees();
-            let mut azimuth = dir.x.atan2(dir.z).to_degrees();
-            // One grid cell: the sun toggle and both angles.
-            let r = ui
-                .horizontal(|ui| {
-                    if ui.selectable_label(active, icon::SUN).on_hover_text(t("Drag in the viewport to aim")).clicked() {
-                        *drag = if active { None } else { Some((node_id, e.id, p.id.clone())) };
-                    }
-                    let a = ui.add(egui::DragValue::new(&mut elevation).range(-90.0..=90.0).suffix("°").speed(1.0)).on_hover_text(t("Elevation"));
-                    let b = ui.add(egui::DragValue::new(&mut azimuth).range(-180.0..=180.0).suffix("°").speed(1.0)).on_hover_text(t("Azimuth"));
-                    a.union(b)
-                })
-                .inner;
-            if r.changed() {
-                let (el, az) = (elevation.to_radians(), azimuth.to_radians());
-                *d = [el.cos() * az.sin(), el.sin(), el.cos() * az.cos()];
-            }
-            r
+            // One grid cell: the direction sphere, the viewport-aim toggle and both angles.
+            ui.horizontal(|ui| {
+                let sphere = crate::ui_widgets::direction_sphere(ui, d, 46.0);
+                let r = ui
+                    .vertical(|ui| {
+                        if ui.selectable_label(active, format!("{} {}", icon::SUN, t("Aim in viewport"))).on_hover_text(t("Drag in the viewport to aim")).clicked() {
+                            *drag = if active { None } else { Some((node_id, e.id, p.id.clone())) };
+                        }
+                        let dir = glam::Vec3::from(*d).normalize_or(glam::Vec3::Y);
+                        let mut elevation = dir.y.clamp(-1.0, 1.0).asin().to_degrees();
+                        let mut azimuth = dir.x.atan2(dir.z).to_degrees();
+                        let r = ui
+                            .horizontal(|ui| {
+                                let a = ui.add(egui::DragValue::new(&mut elevation).range(-90.0..=90.0).suffix("°").speed(1.0)).on_hover_text(t("Elevation"));
+                                let b = ui.add(egui::DragValue::new(&mut azimuth).range(-180.0..=180.0).suffix("°").speed(1.0)).on_hover_text(t("Azimuth"));
+                                a.union(b)
+                            })
+                            .inner;
+                        if r.changed() {
+                            let (el, az) = (elevation.to_radians(), azimuth.to_radians());
+                            *d = [el.cos() * az.sin(), el.sin(), el.cos() * az.cos()];
+                        }
+                        r
+                    })
+                    .inner;
+                sphere.union(r)
+            })
+            .inner
         }
         (ParamKind::Anchor, ParamValue::Anchor(a)) => {
             let anchors: Vec<(u64, String)> = app

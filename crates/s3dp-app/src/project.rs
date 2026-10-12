@@ -645,4 +645,23 @@ mod tests {
         vp.paint.edit_node(inner, false, |n| n.effects.push(e));
         save(&path, &mesh, &vp, None, &device, &queue).unwrap();
     }
+
+    /// Demo project for the graphical editors: a fill with gradient map, levels and toon
+    /// shading (`$S3DP_DEMO`).
+    #[test]
+    #[ignore]
+    fn demo_widgets_project() {
+        let Some(path) = std::env::var_os("S3DP_DEMO").map(std::path::PathBuf::from) else { return };
+        let Some((device, queue)) = device() else { return };
+        let mesh = Mesh::uv_sphere(48, 24);
+        let mut vp = Viewport::new(&device);
+        vp.paint.throttle = false;
+        vp.set_mesh(&device, &queue, &mesh, 256);
+        let fill = vp.paint.add_node(NodeKind::Fill(ChannelValues::defaults()), |_, _| {});
+        for id in ["toon_shading", "levels", "gradient_map"] {
+            let e = vp.paint.new_effect(id).unwrap();
+            vp.paint.edit_node(fill, false, |n| n.effects.push(e));
+        }
+        save(&path, &mesh, &vp, None, &device, &queue).unwrap();
+    }
 }
