@@ -50,6 +50,18 @@ enum Action {
     StartRename(u64),
     Rename(u64, String),
     Group(u64),
+    /// Context-menu operation on a content / mask effect: (node, effect, op).
+    Effect(u64, u64, EffectOp),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EffectOp {
+    Duplicate,
+    Delete,
+    /// Towards the top of the list (applied later).
+    Up,
+    Down,
+    Anchor,
 }
 
 pub fn effect_icon(c: Category) -> &'static str {
@@ -552,9 +564,29 @@ fn effect_rows(app: &mut App, ui: &mut egui::Ui, node: &Node, depth: usize, acti
         painter.text(eye.center(), egui::Align2::CENTER_CENTER, if e.enabled { icon::EYE } else { icon::EYE_SLASH }, egui::FontId::proportional(12.0), theme::TEXT_FAINT);
         if ui.interact(eye, ui.id().with(("fxeye", e.id)), Sense::click()).clicked() {
             actions.push(Action::ToggleEffect(node.id, e.id));
-        } else if resp.clicked() {
+        } else if resp.clicked() || resp.secondary_clicked() {
             actions.push(Action::SelectEffect(node.id, e.id));
         }
+        resp.context_menu(|ui| {
+            let toggle = if e.enabled { format!("{} {}", icon::EYE_SLASH, t("Disable")) } else { format!("{} {}", icon::EYE, t("Enable")) };
+            let items: [(String, Action); 6] = [
+                (toggle, Action::ToggleEffect(node.id, e.id)),
+                (format!("{} {}", icon::COPY, t("Duplicate")), Action::Effect(node.id, e.id, EffectOp::Duplicate)),
+                (format!("{} {}", icon::CARET_UP, t("Move up")), Action::Effect(node.id, e.id, EffectOp::Up)),
+                (format!("{} {}", icon::CARET_DOWN, t("Move down")), Action::Effect(node.id, e.id, EffectOp::Down)),
+                (format!("{} {}", icon::ANCHOR, if e.anchor { t("Remove anchor") } else { t("Make anchor") }), Action::Effect(node.id, e.id, EffectOp::Anchor)),
+                (format!("{} {}", icon::TRASH, t("Delete")), Action::Effect(node.id, e.id, EffectOp::Delete)),
+            ];
+            for (i, (label, action)) in items.into_iter().enumerate() {
+                if i == 5 {
+                    ui.separator();
+                }
+                if ui.button(label).clicked() {
+                    actions.push(action);
+                    ui.close();
+                }
+            }
+        });
     };
     for e in node.effects.iter().rev() {
         row(ui, e, false);
@@ -654,6 +686,61 @@ fn apply(app: &mut App, actions: Vec<Action>) {
                     }
                 }
             }),
+            Action::Effect(node, effect, op) => {
+                paint.edit_document(true, |d| {
+                    let ids = (op == EffectOp::Duplicate).then(|| (d.alloc_id(), d.alloc_id()));
+                    let Some(n) = d.find_mut(node) else { return };
+                    if let Some(i) = n.effects.iter().position(|e| e.id == effect) {
+                        let list = &mut n.effects;
+                        match op {
+                            EffectOp::Duplicate => {
+                                let mut c = list[i].clone();
+                                c.id = ids.map_or(c.id, |x| x.0);
+                                c.anchor = false;
+                                list.insert(i + 1, c);
+                            }
+                            EffectOp::Delete => {
+                                list.remove(i);
+                            }
+                            EffectOp::Up if i + 1 < list.len() => list.swap(i, i + 1),
+                            EffectOp::Down if i > 0 => list.swap(i, i - 1),
+                            EffectOp::Anchor => list[i].anchor = !list[i].anchor,
+                            _ => {}
+                        }
+                    } else if let Some(m) = &mut n.mask
+                        && let Some(i) = m.items.iter().position(|it| matches!(&it.kind, MaskItemKind::Effect(e) if e.id == effect))
+                    {
+                        let list = &mut m.items;
+                        match op {
+                            EffectOp::Duplicate => {
+                                let mut c = list[i].clone();
+                                if let Some((item_id, effect_id)) = ids {
+                                    c.id = item_id;
+                                    if let MaskItemKind::Effect(e) = &mut c.kind {
+                                        e.id = effect_id;
+                                        e.anchor = false;
+                                    }
+                                }
+                                list.insert(i + 1, c);
+                            }
+                            EffectOp::Delete => {
+                                list.remove(i);
+                            }
+                            EffectOp::Up if i + 1 < list.len() => list.swap(i, i + 1),
+                            EffectOp::Down if i > 0 => list.swap(i, i - 1),
+                            EffectOp::Anchor => {
+                                if let MaskItemKind::Effect(e) = &mut list[i].kind {
+                                    e.anchor = !e.anchor;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                });
+                if op == EffectOp::Delete && paint.selected_effect == Some(effect) {
+                    paint.selected_effect = None;
+                }
+            }
             Action::ToggleFolder(id) => paint.edit_node(id, false, |n| {
                 if let NodeKind::Folder { expanded } = &mut n.kind {
                     *expanded = !*expanded;

@@ -248,5 +248,9 @@
  "Pen pressure": "Давление пера",
  "Pen pressure controls the brush size": "Давление пера меняет размер кисти",
  "Pen pressure controls the flow": "Давление пера меняет поток",
- "Min": "Мин."
+ "Min": "Мин.",
+ "Disable": "Выключить",
+ "Enable": "Включить",
+ "Remove anchor": "Убрать якорь",
+ "Make anchor": "Сделать якорем"
 }

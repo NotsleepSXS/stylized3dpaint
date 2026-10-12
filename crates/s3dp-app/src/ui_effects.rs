@@ -544,26 +544,30 @@ fn param_row(app: &App, ui: &mut egui::Ui, def: &EffectDef, e: &mut EffectInstan
         (ParamKind::Enum { options, .. }, ParamValue::Enum(v)) => {
             let before = *v;
             let current = options.get(*v as usize).map_or("?", |o| pick(&o.1, Some(&o.2)));
-            egui::ComboBox::from_id_salt(("enum", e.id, &p.id)).selected_text(current).show_ui(ui, |ui| {
-                for (i, o) in options.iter().enumerate() {
-                    ui.selectable_value(v, i as u32, pick(&o.1, Some(&o.2)));
-                }
-            });
+            let r = egui::ComboBox::from_id_salt(("enum", e.id, &p.id))
+                .selected_text(current)
+                .show_ui(ui, |ui| {
+                    for (i, o) in options.iter().enumerate() {
+                        ui.selectable_value(v, i as u32, pick(&o.1, Some(&o.2)));
+                    }
+                })
+                .response;
             if *v != before {
                 edit.structural();
             }
-            ui.label("")
+            r
         }
         (ParamKind::Direction { .. }, ParamValue::Vec3(d)) => {
             let active = drag.as_ref().is_some_and(|(_, eid, pid)| *eid == e.id && *pid == p.id);
-            if ui.selectable_label(active, icon::SUN).on_hover_text(t("Drag in the viewport to aim")).clicked() {
-                *drag = if active { None } else { Some((node_id, e.id, p.id.clone())) };
-            }
             let dir = glam::Vec3::from(*d).normalize_or(glam::Vec3::Y);
             let mut elevation = dir.y.clamp(-1.0, 1.0).asin().to_degrees();
             let mut azimuth = dir.x.atan2(dir.z).to_degrees();
+            // One grid cell: the sun toggle and both angles.
             let r = ui
                 .horizontal(|ui| {
+                    if ui.selectable_label(active, icon::SUN).on_hover_text(t("Drag in the viewport to aim")).clicked() {
+                        *drag = if active { None } else { Some((node_id, e.id, p.id.clone())) };
+                    }
                     let a = ui.add(egui::DragValue::new(&mut elevation).range(-90.0..=90.0).suffix("°").speed(1.0)).on_hover_text(t("Elevation"));
                     let b = ui.add(egui::DragValue::new(&mut azimuth).range(-180.0..=180.0).suffix("°").speed(1.0)).on_hover_text(t("Azimuth"));
                     a.union(b)
@@ -591,16 +595,20 @@ fn param_row(app: &App, ui: &mut egui::Ui, def: &EffectDef, e: &mut EffectInstan
                 .collect();
             let before = *a;
             let current = a.and_then(|id| anchors.iter().find(|x| x.0 == id)).map_or(t("None").to_owned(), |x| x.1.clone());
-            egui::ComboBox::from_id_salt(("anchor", e.id, &p.id)).selected_text(current).width(150.0).show_ui(ui, |ui| {
-                ui.selectable_value(a, None, t("None"));
-                for (id, name) in &anchors {
-                    ui.selectable_value(a, Some(*id), name);
-                }
-            });
+            let r = egui::ComboBox::from_id_salt(("anchor", e.id, &p.id))
+                .selected_text(current)
+                .width(150.0)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(a, None, t("None"));
+                    for (id, name) in &anchors {
+                        ui.selectable_value(a, Some(*id), name);
+                    }
+                })
+                .response;
             if *a != before {
                 edit.structural();
             }
-            ui.label("")
+            r
         }
         _ => ui.label(RichText::new("?").color(theme::DANGER)),
     };
