@@ -85,6 +85,8 @@ pub struct App {
     fill_done: std::collections::HashSet<u32>,
     fill_stroke: Option<u64>,
     fill_hover: Option<(s3dp_core::select::SelectMode, u32)>,
+    /// Mode the overlay geometry was built for (rebuilt on mode / mesh change).
+    fill_overlay: Option<s3dp_core::select::SelectMode>,
     frame: u64,
     /// Last texture-space dab of a brush stroke on the UV view (texels).
     last_dab_uv: Option<egui::Pos2>,
@@ -159,6 +161,7 @@ impl App {
             fill_done: Default::default(),
             fill_stroke: None,
             fill_hover: None,
+            fill_overlay: None,
             frame: 0,
             last_dab_uv: None,
             split_uv: false,
@@ -220,6 +223,7 @@ impl App {
     fn set_mesh(&mut self, mesh: Mesh) {
         self.topology = None;
         self.fill_hover = None;
+        self.fill_overlay = None;
         let rs = &self.render_state;
         self.viewport.set_mesh(&rs.device, &rs.queue, &mesh, self.texture_size);
         self.status = format!(
@@ -297,6 +301,7 @@ impl App {
                 self.mesh = mesh;
                 self.topology = None;
                 self.fill_hover = None;
+                self.fill_overlay = None;
                 self.needs_frame = true;
                 self.thumbs.clear();
                 self.layers_ui.reset_for(&self.viewport.paint.doc);
@@ -421,6 +426,39 @@ impl App {
             self.topology = Some(s3dp_core::select::Topology::build(&self.mesh));
         }
         self.topology.as_ref().unwrap()
+    }
+
+    /// Wireframe / tint for the current selection mode: face borders (quad diagonals hidden),
+    /// island borders + island colours, or part borders + part colours.
+    fn build_fill_overlay(&mut self) {
+        use s3dp_core::select::{SelectMode, boundary_edges, group_color};
+        let mode = self.fill_mode;
+        self.topology();
+        let topo = self.topology.as_ref().unwrap();
+        let wire3d = boundary_edges(&self.mesh, topo, mode, false);
+        let wire_uv = boundary_edges(&self.mesh, topo, mode, true);
+        let tint: Vec<s3dp_render::TintVertex> = if mode == SelectMode::Face {
+            Vec::new()
+        } else {
+            let groups = if mode == SelectMode::Island { &topo.island } else { &topo.element };
+            self.mesh
+                .indices
+                .chunks_exact(3)
+                .enumerate()
+                .flat_map(|(t, tri)| {
+                    let color = group_color(groups[t]);
+                    tri.iter().map(move |&v| (v, color)).collect::<Vec<_>>()
+                })
+                .map(|(v, color)| {
+                    let vx = &self.mesh.vertices[v as usize];
+                    s3dp_render::TintVertex { position: vx.position, uv: vx.uv, color }
+                })
+                .collect()
+        };
+        let rs = self.render_state.clone();
+        self.viewport.set_overlay(&rs.device, &wire3d, &wire_uv, &tint);
+        self.fill_overlay = Some(mode);
+        self.fill_hover = None;
     }
 
     /// Triangle under a viewport position (camera ray).
@@ -1096,6 +1134,9 @@ impl eframe::App for App {
         crate::ui_env::poll(self, &ctx);
         self.frame += 1;
         self.viewport.show_overlay = self.tool == Tool::PolygonFill;
+        if self.tool == Tool::PolygonFill && self.fill_overlay != Some(self.fill_mode) {
+            self.build_fill_overlay();
+        }
         // A fill stroke ends when the button is up, wherever it was released.
         if self.fill_stroke.is_some_and(|f| f < self.frame) && !ctx.input(|i| i.pointer.primary_down()) {
             self.viewport.paint.end_stroke();

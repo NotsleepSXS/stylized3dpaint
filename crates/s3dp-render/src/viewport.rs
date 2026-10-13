@@ -131,6 +131,8 @@ pub struct Viewport {
     wire: Option<(wgpu::Buffer, u32)>,
     wire_uv: Option<(wgpu::Buffer, u32)>,
     highlight: Option<(wgpu::Buffer, u32)>,
+    tint_pipeline: wgpu::RenderPipeline,
+    tint: Option<(wgpu::Buffer, u32)>,
     /// Draw the wireframe and highlight (Polygon Fill tool active).
     pub show_overlay: bool,
     overlay_rev: u64,
@@ -148,6 +150,15 @@ struct PreviewTargets {
     globals: wgpu::Buffer,
     #[allow(dead_code)]
     bgl: wgpu::BindGroupLayout,
+}
+
+/// Vertex of the per-group tint overlay.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct TintVertex {
+    pub position: [f32; 3],
+    pub uv: [f32; 2],
+    pub color: [u8; 4],
 }
 
 /// What a preview shows.
@@ -376,6 +387,37 @@ impl Viewport {
                 cache: None,
             })
         };
+        let tint_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("group tint"),
+            layout: Some(&depth_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_tint"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<TintVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Unorm8x4],
+                })],
+            },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState { count: SAMPLES, ..Default::default() },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_tint"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState { format: COLOR_FORMAT, blend: Some(wgpu::BlendState::ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
         let wire_pipeline = overlay("wireframe", wgpu::PrimitiveTopology::LineList, "fs_wire");
         let highlight_pipeline = overlay("highlight", wgpu::PrimitiveTopology::TriangleList, "fs_highlight");
         Self {
@@ -403,6 +445,8 @@ impl Viewport {
             wire: None,
             wire_uv: None,
             highlight: None,
+            tint_pipeline,
+            tint: None,
             show_overlay: false,
             overlay_rev: 0,
             mesh: None,
@@ -438,6 +482,7 @@ impl Viewport {
         self.wire = upload(s3dp_core::select::wire_edges(mesh));
         self.wire_uv = upload(s3dp_core::select::wire_edges_uv(mesh));
         self.highlight = None;
+        self.tint = None;
         self.paint.baked_changed();
         self.bake = None;
         self.mesh = Some(GpuMesh { vertices, indices, index_count: mesh.indices.len() as u32 });
@@ -547,6 +592,16 @@ impl Viewport {
         true
     }
 
+    /// Overlay geometry for the current selection mode: wireframe edges (vertex index pairs)
+    /// for the 3D and the UV view, and per-group tint triangles (empty = none).
+    pub fn set_overlay(&mut self, device: &wgpu::Device, wire3d: &[u32], wire_uv: &[u32], tint: &[TintVertex]) {
+        let upload = |data: &[u8], usage, label| device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(label), contents: data, usage });
+        self.wire = (!wire3d.is_empty()).then(|| (upload(bytemuck::cast_slice(wire3d), wgpu::BufferUsages::INDEX, "wireframe"), wire3d.len() as u32));
+        self.wire_uv = (!wire_uv.is_empty()).then(|| (upload(bytemuck::cast_slice(wire_uv), wgpu::BufferUsages::INDEX, "wireframe uv"), wire_uv.len() as u32));
+        self.tint = (!tint.is_empty()).then(|| (upload(bytemuck::cast_slice(tint), wgpu::BufferUsages::VERTEX, "group tint"), tint.len() as u32));
+        self.overlay_rev += 1;
+    }
+
     /// Triangles to highlight (vertex indices, 3 per triangle); empty clears.
     pub fn set_highlight(&mut self, device: &wgpu::Device, indices: &[u32]) {
         self.highlight = (!indices.is_empty()).then(|| {
@@ -561,6 +616,11 @@ impl Viewport {
             return;
         }
         pass.set_bind_group(0, group, &[]);
+        if let Some((b, n)) = &self.tint {
+            pass.set_pipeline(&self.tint_pipeline);
+            pass.set_vertex_buffer(0, b.slice(..));
+            pass.draw(0..*n, 0..1);
+        }
         pass.set_vertex_buffer(0, mesh.vertices.slice(..));
         if let Some((b, n)) = if uv { &self.wire_uv } else { &self.wire } {
             pass.set_pipeline(&self.wire_pipeline);

@@ -109,3 +109,52 @@ fn overlay_highlight_and_wireframe() {
     let diff = plain.chunks_exact(4).zip(on.chunks_exact(4)).filter(|(a, b)| a != b).count();
     assert!(diff > 1000, "overlay changes the image ({diff} px)");
 }
+
+/// Overlay per selection mode, 3D and UV, as one image:
+/// `cargo test -p s3dp-render --test polyfill overlay_sheet -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn overlay_sheet() {
+    use s3dp_core::select::{SelectMode, Topology, boundary_edges, group_color};
+    let Some((device, queue)) = device() else { return };
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/test/monkey_crate.glb");
+    let mesh = s3dp_core::import::load(&path).unwrap();
+    let topo = Topology::build(&mesh);
+    let mut vp = Viewport::new(&device);
+    vp.paint.throttle = false;
+    vp.set_mesh(&device, &queue, &mesh, 256);
+    vp.show_overlay = true;
+    let mut cam = OrbitCamera { yaw: 0.5, pitch: 0.25, ..Default::default() };
+    let b = mesh.bounds();
+    cam.frame(b.center(), b.radius() * 0.8, 1.0);
+    let (w, h) = (300u32, 300u32);
+    let mut frames = Vec::new();
+    for mode in [SelectMode::Face, SelectMode::Island, SelectMode::Element] {
+        let tint: Vec<s3dp_render::TintVertex> = if mode == SelectMode::Face {
+            Vec::new()
+        } else {
+            let g = if mode == SelectMode::Island { &topo.island } else { &topo.element };
+            mesh.indices.chunks_exact(3).enumerate().flat_map(|(t, tri)| tri.iter().map(move |&v| (v, group_color(g[t])))).map(|(v, color)| s3dp_render::TintVertex { position: mesh.vertices[v as usize].position, uv: mesh.vertices[v as usize].uv, color }).collect()
+        };
+        vp.set_overlay(&device, &boundary_edges(&mesh, &topo, mode, false), &boundary_edges(&mesh, &topo, mode, true), &tint);
+        vp.render(&device, &queue, [w, h], &cam, ShadingMode::Unlit);
+        frames.push(vp.read_color(&device, &queue).unwrap().2);
+        let what = s3dp_render::Preview { mask_of: None, uv: true, set: 0, shading: Some(ShadingMode::Unlit), overlay: true };
+        vp.render_preview(&device, &queue, 0, [w, h], &cam, what).unwrap();
+        frames.push(vp.read_preview(&device, &queue, 0).unwrap().2);
+    }
+    let cols = 2usize;
+    let rows = frames.len() / cols;
+    let (w, h) = (w as usize, h as usize);
+    let mut out = vec![0u8; w * cols * h * rows * 4];
+    for (n, f) in frames.iter().enumerate() {
+        let (cx, cy) = (n % cols, n / cols);
+        for y in 0..h {
+            let o = ((cy * h + y) * w * cols + cx * w) * 4;
+            out[o..o + w * 4].copy_from_slice(&f[y * w * 4..(y + 1) * w * 4]);
+        }
+    }
+    let p = std::env::temp_dir().join("s3dp_overlay_sheet.png");
+    image::save_buffer(&p, &out, (w * cols) as u32, (h * rows) as u32, image::ColorType::Rgba8).unwrap();
+    println!("{}", p.display());
+}

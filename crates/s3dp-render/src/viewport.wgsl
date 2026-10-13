@@ -278,3 +278,27 @@ fn fs_wire() -> @location(0) vec4<f32> {
 fn fs_highlight() -> @location(0) vec4<f32> {
     return vec4<f32>(1.0, 0.45, 0.1, 0.38);
 }
+
+// Per-group tint (parts / UV islands) for the Polygon Fill tool.
+struct TintOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) color: vec4<f32>,
+};
+
+@vertex
+fn vs_tint(@location(0) position: vec3<f32>, @location(1) uv: vec2<f32>, @location(2) color: vec4<f32>) -> TintOut {
+    var o: TintOut;
+    if (g.params.z > 0.5) {
+        o.clip = vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.45, 1.0);
+    } else {
+        o.clip = g.view_proj * vec4<f32>(position, 1.0);
+        o.clip.z = o.clip.z - 2e-4 * o.clip.w;
+    }
+    o.color = color;
+    return o;
+}
+
+@fragment
+fn fs_tint(i: TintOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(i.color.rgb, 0.22);
+}

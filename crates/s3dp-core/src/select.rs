@@ -241,6 +241,66 @@ pub fn wire_edges_uv(mesh: &Mesh) -> Vec<u32> {
     out
 }
 
+/// Edges to draw for `mode` (vertex index pairs): edges between different groups and open
+/// borders. Face mode hides the diagonals inside quads, Island mode shows the island borders,
+/// Part mode the open borders of each part. `uv_space` keys adjacency by vertex index (seams
+/// are borders in the UV view) instead of by 3D position.
+pub fn boundary_edges(mesh: &Mesh, topo: &Topology, mode: SelectMode, uv_space: bool) -> Vec<u32> {
+    let b = mesh.bounds();
+    let q = ((b.max - b.min).max_element() * 1e-5).max(1e-9);
+    let key = |v: u32| -> (i64, i64, i64) {
+        if uv_space {
+            (v as i64, 0, 0)
+        } else {
+            let p = Vec3::from(mesh.vertices[v as usize].position) / q;
+            (p.x.round() as i64, p.y.round() as i64, p.z.round() as i64)
+        }
+    };
+    let groups = match mode {
+        SelectMode::Face => &topo.face,
+        SelectMode::Element => &topo.element,
+        SelectMode::Island => &topo.island,
+    };
+    // edge key -> (first occurrence as vertex pair, groups of the triangles using it)
+    let mut edges: HashMap<((i64, i64, i64), (i64, i64, i64)), ((u32, u32), Vec<u32>)> = HashMap::new();
+    for (t, tri) in mesh.indices.chunks_exact(3).enumerate() {
+        let g = groups.get(t).copied().unwrap_or(t as u32);
+        for (a, c) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
+            let (ka, kc) = (key(a), key(c));
+            let e = edges.entry((ka.min(kc), ka.max(kc))).or_insert(((a, c), Vec::new()));
+            e.1.push(g);
+        }
+    }
+    let mut out = Vec::new();
+    for ((a, c), gs) in edges.into_values() {
+        let border = gs.len() == 1 || gs.iter().any(|g| *g != gs[0]);
+        if border {
+            out.extend([a, c]);
+        }
+    }
+    out
+}
+
+/// A distinct, stable colour per group (RGBA8) for tinting parts / islands.
+pub fn group_color(group: u32) -> [u8; 4] {
+    // Golden-ratio hue steps, fixed saturation / value.
+    let h = (group as f32 * 0.618_034).fract() * 6.0;
+    let (s, v) = (0.55f32, 0.95f32);
+    let c = v * s;
+    let x = c * (1.0 - ((h % 2.0) - 1.0).abs());
+    let (r, g, b) = match h as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = v - c;
+    let f = |u: f32| ((u + m) * 255.0).round() as u8;
+    [f(r), f(g), f(b), 255]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,6 +338,24 @@ mod tests {
         let t2 = Topology::build(&m2);
         assert_eq!(distinct(&t2.element), 2, "two unattached parts");
         assert_eq!(t2.triangles_with(SelectMode::Element, 13).len(), 12);
+    }
+
+    #[test]
+    fn boundary_edges_per_mode() {
+        let m = Mesh::cube();
+        let t = Topology::build(&m);
+        // Face mode: 6 quads -> 12 cube edges (diagonals hidden).
+        assert_eq!(boundary_edges(&m, &t, SelectMode::Face, false).len() / 2, 12);
+        // Atlas islands: every cube edge is an island border too.
+        assert_eq!(boundary_edges(&m, &t, SelectMode::Island, false).len() / 2, 12);
+        // One closed part: no open border, nothing to draw.
+        assert_eq!(boundary_edges(&m, &t, SelectMode::Element, false).len(), 0);
+        // Sphere: one island, its seam / poles show in the UV view only.
+        let s = Mesh::uv_sphere(16, 8);
+        let ts = Topology::build(&s);
+        assert!(boundary_edges(&s, &ts, SelectMode::Island, false).is_empty() || boundary_edges(&s, &ts, SelectMode::Island, false).len() < boundary_edges(&s, &ts, SelectMode::Island, true).len());
+        assert!(!boundary_edges(&s, &ts, SelectMode::Island, true).is_empty());
+        assert_ne!(group_color(1), group_color(2));
     }
 
     #[test]
