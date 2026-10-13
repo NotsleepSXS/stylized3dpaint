@@ -126,6 +126,21 @@ pub struct ExportSettings {
     pub resolution_override: BTreeMap<String, [u32; 2]>,
     /// Applied to 8-bit outputs only (alpha excluded).
     pub dither: Dither,
+    /// Bake the Height channel into the exported normal map (engines show no height
+    /// otherwise, and the model looks flat).
+    #[serde(default = "default_true")]
+    pub height_to_normal: bool,
+    /// Strength of the height-derived normal (1 = height range spans 2 % of the texture).
+    #[serde(default = "default_one")]
+    pub height_normal_strength: f32,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_one() -> f32 {
+    1.0
 }
 
 impl Default for ExportSettings {
@@ -139,6 +154,8 @@ impl Default for ExportSettings {
             padding: Padding::Infinite,
             resolution_override: BTreeMap::new(),
             dither: Dither::Ordered,
+            height_to_normal: true,
+            height_normal_strength: 1.0,
         }
     }
 }
@@ -270,7 +287,9 @@ fn render_with(
     let transparent = settings.padding == Padding::Transparent;
     let add_alpha = transparent && (ncomp == 1 || ncomp == 3);
     let nch = if add_alpha { ncomp + 1 } else { ncomp };
-    let sampler = Sampler::new(source, preset.normal);
+    let uses_normal = output.slots.iter().flatten().any(|s| matches!(s.source, Source::NormalCombined { .. }));
+    let hn = (settings.height_to_normal && uses_normal).then(|| source::height_to_normal(source, settings.height_normal_strength)).flatten();
+    let sampler = Sampler::new(source, preset.normal).with_height_normal(hn);
 
     let mut data = vec![0.0f32; w * h * nch];
     ops::par_rows(&mut data, w * nch, |y, row| {

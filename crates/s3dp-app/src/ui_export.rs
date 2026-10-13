@@ -216,6 +216,14 @@ pub fn export_window(app: &mut App, ctx: &egui::Context) {
                     }
                 });
             });
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut e.settings.height_to_normal, t("Bake height into the normal map"))
+                    .on_hover_text(t("Game engines do not use the Height map for shading: without this the model looks flat after export"));
+                if e.settings.height_to_normal {
+                    ui.label(t("Strength"));
+                    ui.add(egui::DragValue::new(&mut e.settings.height_normal_strength).range(0.0..=10.0).speed(0.02).max_decimals(2));
+                }
+            });
             ui.checkbox(&mut e.open_folder, t("Open the folder after export"));
         });
         ui.separator();

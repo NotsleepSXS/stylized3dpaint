@@ -78,11 +78,20 @@ pub(crate) struct Sampler<'a> {
     src: &'a ExportSource,
     defaults: ChannelValues,
     normal: NormalFormat,
+    /// Tangent-space normal derived from the Height channel (encoded 0..1), combined into
+    /// the final normal when set.
+    height_normal: Option<Vec<[f32; 4]>>,
 }
 
 impl<'a> Sampler<'a> {
     pub fn new(src: &'a ExportSource, normal: NormalFormat) -> Self {
-        Self { src, defaults: ChannelValues::defaults(), normal }
+        Self { src, defaults: ChannelValues::defaults(), normal, height_normal: None }
+    }
+
+    /// Also bakes the Height channel into the final normal (see [`height_to_normal`]).
+    pub fn with_height_normal(mut self, hn: Option<Vec<[f32; 4]>>) -> Self {
+        self.height_normal = hn;
+        self
     }
 
     fn channel(&self, c: ChannelId, i: usize) -> [f32; 4] {
@@ -115,12 +124,15 @@ impl<'a> Sampler<'a> {
         let detail =
             self.src.channels.contains_key(&ChannelId::Normal).then(|| self.channel(ChannelId::Normal, i));
         let n = match (base, detail) {
-            (None, None) => return [0.5, 0.5, 1.0],
+            (None, None) => [0.0, 0.0, 1.0],
             (Some(b), None) => unpack(b),
             (None, Some(d)) => unpack(d),
             (Some(b), Some(d)) => rnm(b, d),
         };
-        let n = normalize(n);
+        let mut n = normalize(n);
+        if let Some(hn) = self.height_normal.as_ref().and_then(|h| h.get(i)) {
+            n = normalize(rnm([n[0] * 0.5 + 0.5, n[1] * 0.5 + 0.5, n[2] * 0.5 + 0.5, 1.0], *hn));
+        }
         [n[0] * 0.5 + 0.5, n[1] * 0.5 + 0.5, n[2] * 0.5 + 0.5]
     }
 
@@ -193,6 +205,47 @@ impl<'a> Sampler<'a> {
         }
         v
     }
+}
+
+/// Tangent-space normal map (OpenGL, encoded 0..1) from the Height channel's slope in texture
+/// space. `strength` 1 = the full 0..1 height range spans 2 % of the texture width, so the
+/// result does not depend on the resolution. Neighbours outside the UV islands are ignored
+/// (no false steps along seams). None when there is no Height channel.
+pub fn height_to_normal(src: &ExportSource, strength: f32) -> Option<Vec<[f32; 4]>> {
+    let h = src.channels.get(&ChannelId::Height)?;
+    let (w, hh) = (src.width as usize, src.height as usize);
+    if w == 0 || hh == 0 || h.len() < w * hh * 4 {
+        return None;
+    }
+    let depth = strength * 0.02 * w as f32;
+    let at = |x: usize, y: usize| h[(y * w + x) * 4];
+    let ok = |x: i64, y: i64| x >= 0 && y >= 0 && (x as usize) < w && (y as usize) < hh && src.covered(y as usize * w + x as usize);
+    let mut out = vec![[0.5, 0.5, 1.0, 1.0]; w * hh];
+    for y in 0..hh {
+        for x in 0..w {
+            let i = y * w + x;
+            if !src.covered(i) {
+                continue;
+            }
+            let c = at(x, y);
+            // Central difference where both neighbours are on the island, else one-sided.
+            let slope = |dx: i64, dy: i64| {
+                let (xi, yi) = (x as i64, y as i64);
+                let p = ok(xi + dx, yi + dy).then(|| at((xi + dx) as usize, (yi + dy) as usize));
+                let m = ok(xi - dx, yi - dy).then(|| at((xi - dx) as usize, (yi - dy) as usize));
+                match (p, m) {
+                    (Some(p), Some(m)) => (p - m) * 0.5,
+                    (Some(p), None) => p - c,
+                    (None, Some(m)) => c - m,
+                    (None, None) => 0.0,
+                }
+            };
+            // Rows grow along +V (the bitangent), columns along +U (the tangent).
+            let n = normalize([-slope(1, 0) * depth, -slope(0, 1) * depth, 1.0]);
+            out[i] = [n[0] * 0.5 + 0.5, n[1] * 0.5 + 0.5, n[2] * 0.5 + 0.5, 1.0];
+        }
+    }
+    Some(out)
 }
 
 fn unpack(v: [f32; 4]) -> [f32; 3] {

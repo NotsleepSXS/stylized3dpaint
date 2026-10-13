@@ -292,5 +292,8 @@
  "This effect with what is below it (effects above are left out), on a sample shape": "Этот эффект вместе с тем, что под ним (эффекты выше не учитываются), на образце",
  "The same on the sample's flat texture": "То же на плоской текстуре образца",
  "Mask up to this effect": "Маска до этого эффекта",
- "Layer up to this effect": "Слой до этого эффекта"
+ "Layer up to this effect": "Слой до этого эффекта",
+ "Bake height into the normal map": "Перевести карту высот в карту нормалей",
+ "Game engines do not use the Height map for shading: without this the model looks flat after export": "Игровые движки не используют карту высот для освещения: без этого после экспорта модель выглядит плоской",
+ "Strength": "Сила"
 }

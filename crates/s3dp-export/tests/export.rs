@@ -344,3 +344,48 @@ fn padding_4k_perf() {
     let _ = render_output(&s, &p, o, &ExportSettings::default());
     eprintln!("4096² ORM render+pad: {:?}", t.elapsed());
 }
+
+/// Height channel → normal map (export option): slope direction, strength, off switch,
+/// island borders, DirectX flip.
+#[test]
+fn height_bakes_into_the_normal_map() {
+    let dir = tmp("height_normal");
+    // Height ramps up along +U (columns) in the left half, along +V (rows) in the right half.
+    let mut h = vec![0.0f32; (N * N * 4) as usize];
+    for y in 0..N {
+        for x in 0..N {
+            let v = if x < N / 2 { x as f32 / N as f32 } else { y as f32 / N as f32 };
+            h[((y * N + x) * 4) as usize] = v;
+        }
+    }
+    let src = ExportSource::new("Set", N, N).with_channel(ChannelId::Height, h).with_coverage(circle_coverage());
+    let p = preset("glTF");
+    let o = p.outputs.iter().find(|o| o.suffix == "Normal").unwrap();
+    let px = |img: &RenderedImage, x: u32, y: u32| {
+        let i = ((y * img.width + x) * img.channels as u32) as usize;
+        [img.data[i], img.data[i + 1], img.data[i + 2]]
+    };
+    let st = settings(dir.clone());
+    let img = render_output(&src, &p, o, &st);
+    let left = px(&img, 20, 32);
+    let right = px(&img, 44, 32);
+    println!("left {left:?} right {right:?}");
+    // The ramp spans the whole texture: a gentle slope (full range = 2 % of the width).
+    assert!(left[0] < 0.495 && (left[1] - 0.5).abs() < 1e-3, "slope along +U tilts the normal towards -X");
+    assert!(right[1] < 0.495 && (right[0] - 0.5).abs() < 1e-3, "slope along +V tilts the normal towards -Y (OpenGL)");
+    // Stronger = more tilt.
+    let strong = render_output(&src, &p, o, &ExportSettings { height_normal_strength: 3.0, ..st.clone() });
+    assert!(px(&strong, 20, 32)[0] < left[0]);
+    // Off: flat.
+    let off = render_output(&src, &p, o, &ExportSettings { height_to_normal: false, ..st.clone() });
+    assert!(px(&off, 20, 32).iter().zip([0.5, 0.5, 1.0]).all(|(a, b)| (a - b).abs() < 1e-3));
+    // Constant height: flat everywhere, including at the island border (no false steps).
+    let flat = ExportSource::new("Set", N, N).fill_channel(ChannelId::Height, [0.8, 0.0, 0.0, 1.0]).with_coverage(circle_coverage());
+    let f = render_output(&flat, &p, o, &st);
+    assert!(px(&f, 13, 32).iter().zip([0.5, 0.5, 1.0]).all(|(a, b)| (a - b).abs() < 1e-3), "border texel stays flat");
+    // DirectX presets flip green.
+    let ue = preset("Unreal");
+    let uo = ue.outputs.iter().find(|o| o.suffix.contains("Normal")).unwrap();
+    let dx = render_output(&src, &ue, uo, &st);
+    assert!(px(&dx, 44, 32)[1] > 0.505, "DirectX: the same slope reads as +Y");
+}
