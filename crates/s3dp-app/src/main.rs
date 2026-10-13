@@ -29,8 +29,22 @@ fn app_icon() -> Option<egui::IconData> {
     Some(egui::IconData { rgba: img.into_raw(), width, height })
 }
 
+/// Shows a fatal error to the user (there is no console on Windows) and logs it.
+fn report_fatal(msg: &str) {
+    log::error!("{msg}");
+    let log = paths::cache_dir().map(|d| d.join("stylized3dpaint.log").display().to_string()).unwrap_or_default();
+    let text = format!("{msg}\n\nLog: {log}\nPlease report it: {REPO_URL}/issues");
+    let _ = rfd::MessageDialog::new().set_level(rfd::MessageLevel::Error).set_title("Stylized3DPaint").set_description(text).set_buttons(rfd::MessageButtons::Ok).show();
+}
+
 fn main() -> eframe::Result {
     init_logging();
+    std::panic::set_hook(Box::new(|info| {
+        let bt = std::backtrace::Backtrace::force_capture();
+        log::error!("panic: {info}\n{bt}");
+        report_fatal(&format!("Stylized3DPaint stopped because of an error:\n{info}"));
+    }));
+    log::info!("Stylized3DPaint {} on {} ({})", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH);
     let initial = std::env::args_os().nth(1).map(std::path::PathBuf::from);
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -53,11 +67,15 @@ fn main() -> eframe::Result {
             desc
         });
     }
-    eframe::run_native(
+    let result = eframe::run_native(
         "Stylized3DPaint",
         options,
         Box::new(move |cc| Ok(Box::new(app::App::new(cc, initial)?))),
-    )
+    );
+    if let Err(e) = &result {
+        report_fatal(&format!("Stylized3DPaint could not start:\n{e}\n\nThe graphics driver may not support Vulkan / DirectX 12. Updating the GPU driver usually helps."));
+    }
+    result
 }
 
 /// Logs to stderr and to `~/.cache/stylized3dpaint/stylized3dpaint.log` (spec §11).
