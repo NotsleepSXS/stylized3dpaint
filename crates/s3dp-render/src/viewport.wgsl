@@ -257,16 +257,23 @@ fn fs_pick(i: PickOut) -> @location(0) vec4<f32> {
     return vec4<f32>(i.uv, f32(i.set_index + 1u), 1.0);
 }
 
+/// Moves a point a tiny fraction of its distance towards the camera, in world space, so an
+/// overlay sits on the surface without z-fighting. (A constant offset in clip depth grows
+/// with distance and let back edges of thin models show through.)
+fn overlay_clip(p: vec3<f32>) -> vec4<f32> {
+    let to_eye = g.eye.xyz - p;
+    let q = p + to_eye * 0.0003;
+    return g.view_proj * vec4<f32>(q, 1.0);
+}
+
 // Overlays for the Polygon Fill tool: wireframe lines and the highlighted triangles, in 3D
-// or flat in UV space (params.z), nudged towards the camera to sit on the surface.
+// or flat in UV space (params.z).
 @vertex
 fn vs_overlay(v: VsIn) -> @builtin(position) vec4<f32> {
     if (g.params.z > 0.5) {
         return vec4<f32>(v.uv.x * 2.0 - 1.0, 1.0 - v.uv.y * 2.0, 0.4, 1.0);
     }
-    var c = g.view_proj * vec4<f32>(v.position, 1.0);
-    c.z = c.z - 3e-4 * c.w;
-    return c;
+    return overlay_clip(v.position);
 }
 
 @fragment
@@ -291,8 +298,7 @@ fn vs_tint(@location(0) position: vec3<f32>, @location(1) uv: vec2<f32>, @locati
     if (g.params.z > 0.5) {
         o.clip = vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.45, 1.0);
     } else {
-        o.clip = g.view_proj * vec4<f32>(position, 1.0);
-        o.clip.z = o.clip.z - 2e-4 * o.clip.w;
+        o.clip = overlay_clip(position);
     }
     o.color = color;
     return o;

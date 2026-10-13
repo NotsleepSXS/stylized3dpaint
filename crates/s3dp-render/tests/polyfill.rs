@@ -158,3 +158,69 @@ fn overlay_sheet() {
     image::save_buffer(&p, &out, (w * cols) as u32, (h * rows) as u32, image::ColorType::Rgba8).unwrap();
     println!("{}", p.display());
 }
+
+/// Hidden (back) edges must not show through the model: pixels on the projection of the
+/// edges around the cube corner farthest from the camera stay as without the overlay.
+#[test]
+fn overlay_does_not_show_through() {
+    use s3dp_core::select::{SelectMode, Topology, boundary_edges};
+    let Some((device, queue)) = device() else { return };
+    // A thin slab (like a crowbar's cross-section seen from far): back edges sit just behind
+    // the front face.
+    let mut mesh = Mesh::cube();
+    for v in &mut mesh.vertices {
+        v.position[2] *= 0.2;
+    }
+    let topo = Topology::build(&mesh);
+    let mut vp = Viewport::new(&device);
+    vp.paint.throttle = false;
+    vp.set_mesh(&device, &queue, &mesh, 64);
+    let mut cam = OrbitCamera { yaw: 0.35, pitch: 0.3, ..Default::default() };
+    cam.frame(glam::Vec3::ZERO, 1.2, 1.0);
+    cam.distance *= 6.0; // far away: depth precision matters
+    cam.fov_y /= 6.0;
+    let size = [128u32, 128];
+    vp.render(&device, &queue, size, &cam, ShadingMode::Unlit);
+    let plain = vp.read_color(&device, &queue).unwrap().2;
+    vp.set_overlay(&device, &boundary_edges(&mesh, &topo, SelectMode::Face, false), &[], &[]);
+    vp.show_overlay = true;
+    vp.render(&device, &queue, size, &cam, ShadingMode::Unlit);
+    let on = vp.read_color(&device, &queue).unwrap().2;
+    // Back face corners: z = -0.7 * 0.03 side seen from +z: farthest is the corner away from the eye.
+    let eye = cam.eye();
+    let corners: Vec<glam::Vec3> = (0..8).map(|i| glam::Vec3::new(if i & 1 == 0 { -0.7 } else { 0.7 }, if i & 2 == 0 { -0.7 } else { 0.7 }, if i & 4 == 0 { -0.14 } else { 0.14 })).collect();
+    let far = *corners.iter().max_by(|a, b| a.distance(eye).total_cmp(&b.distance(eye))).unwrap();
+    let vpm = cam.projection(1.0) * cam.view();
+    let mut changed = 0;
+    let mut tested = 0;
+    for c in &corners {
+        // Edges from the far corner to its neighbours (differ in one axis).
+        let diff = (*c - far).abs();
+        let axes = (diff.x > 1e-3) as u32 + (diff.y > 1e-3) as u32 + (diff.z > 1e-3) as u32;
+        if axes != 1 || diff.z > 1e-3 {
+            continue; // skip the short thickness edge (it is near the silhouette)
+        }
+        for k in 1..8 {
+            let p = far + (*c - far) * (k as f32 / 8.0);
+            let n = vpm.project_point3(p);
+            let (x, y) = (((n.x * 0.5 + 0.5) * 128.0) as usize, ((0.5 - n.y * 0.5) * 128.0) as usize);
+            if x < 4 || y < 4 || x > 123 || y > 123 {
+                continue;
+            }
+            // Skip where the matching front edge (visible) projects within 3 px.
+            let front = vpm.project_point3(glam::Vec3::new(p.x, p.y, -p.z));
+            let (fx, fy) = ((front.x * 0.5 + 0.5) * 128.0, (0.5 - front.y * 0.5) * 128.0);
+            if (fx - x as f32).hypot(fy - y as f32) < 3.0 {
+                continue;
+            }
+            tested += 1;
+            let i = (y * 128 + x) * 4;
+            if (0..3).any(|ch| (on[i + ch] as i32 - plain[i + ch] as i32).abs() > 12) {
+                changed += 1;
+            }
+        }
+    }
+    println!("hidden edge pixels tested {tested}, changed {changed}");
+    assert!(tested >= 6);
+    assert!(changed <= 1, "back edges show through the model ({changed} / {tested})");
+}
