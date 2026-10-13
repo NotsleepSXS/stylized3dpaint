@@ -19,6 +19,31 @@ darken, hue shift by light — no hand painting.*
 *A real asset being textured: the viewport in 3D + UV mode, the Stylization filter's settings
 with its preview on a sample shape, and a layer stack of fills, folders, masks and effects.*
 
+### In a game engine
+
+![The textured crowbar in Unreal Engine 5 after export](docs/images/in_engine_unreal.png)
+
+*The same kind of asset after export, in Unreal Engine 5 (Unreal ORM preset: DirectX normals with the
+height baked in, packed occlusion / roughness / metallic).*
+
+## HDRI lighting
+
+The viewport's **Material (Lit)** mode is lit by an HDRI: diffuse light from spherical harmonics,
+reflections from a GGX-prefiltered environment (sharper on glossy, blurrier on rough surfaces),
+ACES tone mapping and auto exposure so every map has a similar brightness.
+
+![The test model lit by each of the eight built-in HDRIs](docs/images/hdri_environments.png)
+
+- **8 built-in maps** from [Poly Haven](https://polyhaven.com/hdris) (CC0), embedded at 1K:
+  two Ferndale studios, Studio Kominka, Camdeboo Road, Cobblestone Parish Road, Minedump Flats,
+  Qwantani Dusk 2, Sunset in the Chalk Quarry ([details](assets/hdri/LICENSE.md)).
+- **Your own HDRIs**: *Environment* panel (sun icon in the viewport) → *Choose folder…*; `.hdr` / `.exr`
+  equirectangular maps. A file named like a built-in (e.g. `camdeboo_road_2k.hdr`) replaces it, so
+  you can drop in higher-resolution versions.
+- **Rotate** the lighting with the slider or **Shift + right-drag** in the viewport; exposure (EV),
+  auto exposure, and the HDRI as a (blurred) background.
+- Maps are prepared in the background (~2 s for a 2K map) and the choice is remembered.
+
 ## Build
 
 Needs a recent stable Rust (edition 2024) and a Vulkan / Metal / DX12 capable GPU.
