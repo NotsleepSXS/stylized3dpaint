@@ -7,6 +7,7 @@ pub mod document;
 pub mod effect_def;
 pub mod legacy;
 pub mod import;
+pub mod library;
 pub mod mesh;
 pub mod seams;
 pub mod select;

@@ -75,6 +75,8 @@ pub struct App {
     viewport_tex: Option<egui::TextureId>,
     /// Sample-shape scene of the effect preview (created on first use).
     pub sample: Option<crate::ui_preview::SampleScene>,
+    /// Content browser (preset materials / masks, effects).
+    pub content: crate::ui_content::ContentUi,
     /// Lighting environment (HDRI) state.
     pub env: crate::ui_env::EnvUi,
     /// Polygon Fill: what a click selects, and add (reveal / paint) vs remove (hide / erase).
@@ -155,6 +157,7 @@ impl App {
             viewport_tex: None,
             sample: None,
             env: crate::ui_env::EnvUi::new(),
+            content: Default::default(),
             fill_mode: Default::default(),
             fill_add: true,
             topology: None,
@@ -1159,6 +1162,7 @@ impl eframe::App for App {
         ui_bake::bake_window(self, &ctx);
         ui_export::export_window(self, &ctx);
         crate::ui_env::window(self, &ctx);
+        crate::ui_content::dialogs(self, &ctx);
         if self.viewport.take_bake_finished() {
             self.bake.has_baked = true;
             self.viewport.paint.touch();

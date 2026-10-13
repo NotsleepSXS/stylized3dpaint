@@ -8,6 +8,7 @@ mod paths;
 mod project;
 mod theme;
 mod ui_bake;
+mod ui_content;
 mod ui_dock;
 mod ui_export;
 mod ui_effects;

@@ -20,10 +20,11 @@ pub enum Tab {
     Properties,
     Brush,
     Project,
+    Content,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 5] = [Tab::Viewport, Tab::Layers, Tab::Properties, Tab::Brush, Tab::Project];
+    pub const ALL: [Tab; 6] = [Tab::Viewport, Tab::Layers, Tab::Properties, Tab::Brush, Tab::Project, Tab::Content];
 
     /// English UI key (translated with `t`).
     pub fn label(self) -> &'static str {
@@ -33,6 +34,7 @@ impl Tab {
             Tab::Properties => "Properties",
             Tab::Brush => "Brush",
             Tab::Project => "Project",
+            Tab::Content => "Content",
         }
     }
 
@@ -43,6 +45,7 @@ impl Tab {
             Tab::Properties => icon::SLIDERS_HORIZONTAL,
             Tab::Brush => icon::PAINT_BRUSH,
             Tab::Project => icon::FOLDER_OPEN,
+            Tab::Content => icon::PACKAGE,
         }
     }
 }
@@ -51,8 +54,9 @@ impl Tab {
 pub fn default_layout() -> DockState<Tab> {
     let mut state = DockState::new(vec![Tab::Viewport]);
     let tree = state.main_surface_mut();
-    let [_, right] = tree.split_right(NodeIndex::root(), 0.76, vec![Tab::Properties, Tab::Brush, Tab::Project]);
+    let [left, right] = tree.split_right(NodeIndex::root(), 0.76, vec![Tab::Properties, Tab::Brush, Tab::Project]);
     tree.split_below(right, 0.5, vec![Tab::Layers]);
+    tree.split_below(left, 0.74, vec![Tab::Content]);
     state
 }
 
@@ -64,7 +68,22 @@ fn layout_path() -> Option<PathBuf> {
 pub fn load_layout() -> DockState<Tab> {
     let saved = layout_path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|s| ron::from_str::<DockState<Tab>>(&s).ok());
     match saved {
-        Some(state) if state.find_tab(&Tab::Viewport).is_some() => state,
+        Some(mut state) if state.find_tab(&Tab::Viewport).is_some() => {
+            // v0.2 added the Content panel: put it under the viewport once.
+            let marker = layout_path().map(|p| p.with_file_name("layout.v2"));
+            if state.find_tab(&Tab::Content).is_none() && marker.as_ref().is_some_and(|m| !m.exists()) {
+                if let Some(path) = state.find_tab(&Tab::Viewport) {
+                    let node = path.node_path().node;
+                    if path.node_path().surface == egui_dock::SurfaceIndex::main() {
+                        state.main_surface_mut().split_below(node, 0.74, vec![Tab::Content]);
+                    }
+                }
+            }
+            if let Some(m) = marker {
+                let _ = std::fs::write(m, "content panel added\n");
+            }
+            state
+        }
         _ => default_layout(),
     }
 }
@@ -131,6 +150,7 @@ impl TabViewer for Viewer<'_> {
             Tab::Properties => panel_body(ui, "properties", |ui| ui_effects::properties(app, ui)),
             Tab::Brush => panel_body(ui, "brush", |ui| ui_panels::brush_tab(app, ui)),
             Tab::Project => panel_body(ui, "project", |ui| ui_panels::project_tab(app, ui)),
+            Tab::Content => crate::ui_content::panel(app, ui),
         }
     }
 

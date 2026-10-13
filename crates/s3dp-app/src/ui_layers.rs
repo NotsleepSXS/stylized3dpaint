@@ -42,6 +42,11 @@ pub struct LayersUi {
 }
 
 impl LayersUi {
+    /// Shows the effect list of a node (e.g. a just inserted preset).
+    pub fn open_effects_for(&mut self, id: u64) {
+        self.open_effects.insert(id);
+    }
+
     /// Fresh panel state for a newly opened document: no selection, effect lists of layers
     /// that have effects expanded (shows what each effect is attached to).
     pub fn reset_for(&mut self, doc: &s3dp_core::Document) {
@@ -617,6 +622,14 @@ fn node_row(app: &mut App, ui: &mut egui::Ui, node: &Node, depth: usize, actions
         }
         if ui.button(t("Rename")).clicked() {
             actions.push(Action::StartRename(node.id));
+            ui.close();
+        }
+        if ui.button(format!("{} {}", icon::PACKAGE, t("Save as preset material…"))).clicked() {
+            app.content.save = Some(crate::ui_content::SaveDialog { node: node.id, mask: false, name: node.name.clone() });
+            ui.close();
+        }
+        if node.mask.is_some() && ui.button(format!("{} {}", icon::SQUARE_HALF, t("Save mask as preset…"))).clicked() {
+            app.content.save = Some(crate::ui_content::SaveDialog { node: node.id, mask: true, name: format!("{} — {}", node.name, t("mask")) });
             ui.close();
         }
         if ui.button(format!("{} {}", icon::TRASH, t("Delete"))).clicked() {

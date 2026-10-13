@@ -738,6 +738,38 @@ impl Painter {
     }
 
     /// Deep copy with fresh ids; painted textures are shared (they are immutable).
+    /// Inserts a preset material (a layer / folder subtree) above the active node with fresh
+    /// ids, as one undo step. Returns the new node id.
+    pub fn insert_preset(&mut self, mut node: Node) -> u64 {
+        self.checkpoint();
+        s3dp_core::library::fresh_ids(&mut node, &mut || self.doc.alloc_id());
+        let id = node.id;
+        self.doc.insert_above(self.active, node);
+        self.active = Some(id);
+        self.target = EditTarget::Content;
+        self.selected_effect = None;
+        self.mark_all_dirty();
+        id
+    }
+
+    /// Replaces the mask of `node` with a preset mask (fresh ids), as one undo step.
+    pub fn apply_mask_preset(&mut self, node: u64, mut mask: s3dp_core::Mask) {
+        if self.doc.find(node).is_none() {
+            return;
+        }
+        self.checkpoint();
+        s3dp_core::library::fresh_mask(&mut mask, &mut || self.doc.alloc_id());
+        let paint_item = mask.items.iter().rev().find(|i| matches!(i.kind, s3dp_core::MaskItemKind::Paint)).map(|i| i.id);
+        if let Some(n) = self.doc.find_mut(node) {
+            n.mask = Some(mask);
+        }
+        self.active = Some(node);
+        if let Some(p) = paint_item {
+            self.target = EditTarget::MaskItem(p);
+        }
+        self.mark_all_dirty();
+    }
+
     /// Duplicates a node (with its effects, masks and children) above it. Returns the
     /// (old, new) id of every copied node, so UI state can follow the copy.
     pub fn duplicate_node(&mut self, id: u64) -> Vec<(u64, u64)> {
