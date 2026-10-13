@@ -15,7 +15,7 @@ const WEAR: [&str; 5] = ["metal_edge_wear", "paint_peel", "rust", "wood_edge_wea
 const EXTRA: [&str; 2] = ["stone_chips", "wood_grain"];
 
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::default();
+    let instance = s3dp_render::gpu::new_instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
     pollster::block_on(adapter.request_device(&Default::default())).ok()
 }

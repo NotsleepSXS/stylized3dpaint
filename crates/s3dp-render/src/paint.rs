@@ -737,7 +737,6 @@ impl Painter {
         self.mark_all_dirty();
     }
 
-    /// Deep copy with fresh ids; painted textures are shared (they are immutable).
     /// Inserts a preset material (a layer / folder subtree) above the active node with fresh
     /// ids, as one undo step. Returns the new node id.
     pub fn insert_preset(&mut self, mut node: Node) -> u64 {
@@ -764,12 +763,13 @@ impl Painter {
             n.mask = Some(mask);
         }
         self.active = Some(node);
-        if let Some(p) = paint_item {
-            self.target = EditTarget::MaskItem(p);
-        }
+        // The old mask's items are gone: target the new paint item, or the content.
+        self.target = paint_item.map_or(EditTarget::Content, EditTarget::MaskItem);
+        self.selected_effect = None;
         self.mark_all_dirty();
     }
 
+    /// Deep copy with fresh ids; painted textures are shared (they are immutable).
     /// Duplicates a node (with its effects, masks and children) above it. Returns the
     /// (old, new) id of every copied node, so UI state can follow the copy.
     pub fn duplicate_node(&mut self, id: u64) -> Vec<(u64, u64)> {

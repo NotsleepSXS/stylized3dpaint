@@ -130,6 +130,10 @@ pub struct Viewport {
     highlight_pipeline: wgpu::RenderPipeline,
     wire: Option<(wgpu::Buffer, u32)>,
     wire_uv: Option<(wgpu::Buffer, u32)>,
+    /// Per texture set index range into `wire_uv` (the UV view shows one set).
+    wire_uv_sets: Vec<std::ops::Range<u32>>,
+    /// Texture set of the highlighted triangles.
+    highlight_set: usize,
     highlight: Option<(wgpu::Buffer, u32)>,
     tint_pipeline: wgpu::RenderPipeline,
     tint: Option<(wgpu::Buffer, u32)>,
@@ -444,6 +448,8 @@ impl Viewport {
             highlight_pipeline,
             wire: None,
             wire_uv: None,
+            wire_uv_sets: Vec::new(),
+            highlight_set: 0,
             highlight: None,
             tint_pipeline,
             tint: None,
@@ -473,14 +479,10 @@ impl Viewport {
         let scale = self.paint.scale;
         self.baker.rasterize_geometry(device, queue, &self.paint.sets, &vertices, &indices, scale.bbox_min, scale.bbox_size);
         self.paint.build_seam_links(device, queue);
-        let upload = |edges: Vec<u32>| {
-            (!edges.is_empty()).then(|| {
-                let b = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("wireframe"), contents: bytemuck::cast_slice(&edges), usage: wgpu::BufferUsages::INDEX });
-                (b, edges.len() as u32)
-            })
-        };
-        self.wire = upload(s3dp_core::select::wire_edges(mesh));
-        self.wire_uv = upload(s3dp_core::select::wire_edges_uv(mesh));
+        // Overlay geometry comes from the app per selection mode (set_overlay).
+        self.wire = None;
+        self.wire_uv = None;
+        self.wire_uv_sets.clear();
         self.highlight = None;
         self.tint = None;
         self.paint.baked_changed();
@@ -594,16 +596,26 @@ impl Viewport {
 
     /// Overlay geometry for the current selection mode: wireframe edges (vertex index pairs)
     /// for the 3D and the UV view, and per-group tint triangles (empty = none).
-    pub fn set_overlay(&mut self, device: &wgpu::Device, wire3d: &[u32], wire_uv: &[u32], tint: &[TintVertex]) {
+    /// `wire_uv` holds one edge list per texture set; `tint` has 3 vertices per mesh triangle
+    /// in index order (so each set is the vertex range of its index range).
+    pub fn set_overlay(&mut self, device: &wgpu::Device, wire3d: &[u32], wire_uv: &[Vec<u32>], tint: &[TintVertex]) {
         let upload = |data: &[u8], usage, label| device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(label), contents: data, usage });
         self.wire = (!wire3d.is_empty()).then(|| (upload(bytemuck::cast_slice(wire3d), wgpu::BufferUsages::INDEX, "wireframe"), wire3d.len() as u32));
-        self.wire_uv = (!wire_uv.is_empty()).then(|| (upload(bytemuck::cast_slice(wire_uv), wgpu::BufferUsages::INDEX, "wireframe uv"), wire_uv.len() as u32));
+        let flat: Vec<u32> = wire_uv.concat();
+        self.wire_uv_sets.clear();
+        let mut at = 0u32;
+        for w in wire_uv {
+            self.wire_uv_sets.push(at..at + w.len() as u32);
+            at += w.len() as u32;
+        }
+        self.wire_uv = (!flat.is_empty()).then(|| (upload(bytemuck::cast_slice(&flat), wgpu::BufferUsages::INDEX, "wireframe uv"), flat.len() as u32));
         self.tint = (!tint.is_empty()).then(|| (upload(bytemuck::cast_slice(tint), wgpu::BufferUsages::VERTEX, "group tint"), tint.len() as u32));
         self.overlay_rev += 1;
     }
 
     /// Triangles to highlight (vertex indices, 3 per triangle); empty clears.
-    pub fn set_highlight(&mut self, device: &wgpu::Device, indices: &[u32]) {
+    pub fn set_highlight(&mut self, device: &wgpu::Device, indices: &[u32], set: usize) {
+        self.highlight_set = set;
         self.highlight = (!indices.is_empty()).then(|| {
             let b = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("highlight"), contents: bytemuck::cast_slice(indices), usage: wgpu::BufferUsages::INDEX });
             (b, indices.len() as u32)
@@ -611,23 +623,34 @@ impl Viewport {
         self.overlay_rev += 1;
     }
 
-    fn draw_overlay(&self, pass: &mut wgpu::RenderPass<'_>, group: &wgpu::BindGroup, mesh: &GpuMesh, uv: bool) {
+    /// `uv_set`: the UV view of that texture set (only its triangles / edges), None = 3D.
+    fn draw_overlay(&self, pass: &mut wgpu::RenderPass<'_>, group: &wgpu::BindGroup, mesh: &GpuMesh, uv_set: Option<usize>) {
         if !self.show_overlay {
             return;
         }
         pass.set_bind_group(0, group, &[]);
         if let Some((b, n)) = &self.tint {
+            let range = match uv_set {
+                Some(s) => self.paint.sets.get(s).map_or(0..0, |set| set.index_range()),
+                None => 0..*n,
+            };
             pass.set_pipeline(&self.tint_pipeline);
             pass.set_vertex_buffer(0, b.slice(..));
-            pass.draw(0..*n, 0..1);
+            pass.draw(range.start.min(*n)..range.end.min(*n), 0..1);
         }
         pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-        if let Some((b, n)) = if uv { &self.wire_uv } else { &self.wire } {
+        let wire = match uv_set {
+            Some(s) => self.wire_uv.as_ref().zip(self.wire_uv_sets.get(s).cloned()),
+            None => self.wire.as_ref().map(|w| (w, 0..w.1)),
+        };
+        if let Some(((b, _), range)) = wire {
             pass.set_pipeline(&self.wire_pipeline);
             pass.set_index_buffer(b.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..*n, 0, 0..1);
+            pass.draw_indexed(range, 0, 0..1);
         }
-        if let Some((b, n)) = &self.highlight {
+        if let Some((b, n)) = &self.highlight
+            && uv_set.is_none_or(|s| s == self.highlight_set)
+        {
             pass.set_pipeline(&self.highlight_pipeline);
             pass.set_index_buffer(b.slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..*n, 0, 0..1);
@@ -756,7 +779,7 @@ impl Viewport {
                 pass.draw_indexed(range.clone(), 0, 0..1);
             }
             if what.overlay {
-                self.draw_overlay(&mut pass, &pv_group, mesh, what.uv);
+                self.draw_overlay(&mut pass, &pv_group, mesh, what.uv.then_some(what.set));
             }
         }
         queue.submit([encoder.finish()]);
@@ -853,7 +876,7 @@ impl Viewport {
                     pass.set_bind_group(1, &set.view_bg, &[]);
                     pass.draw_indexed(range, 0, 0..1);
                 }
-                self.draw_overlay(&mut pass, &self.bind_group, mesh, false);
+                self.draw_overlay(&mut pass, &self.bind_group, mesh, None);
             }
         }
         if let Some(mesh) = &self.mesh {

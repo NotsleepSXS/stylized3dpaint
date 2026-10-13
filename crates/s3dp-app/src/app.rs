@@ -89,6 +89,8 @@ pub struct App {
     fill_hover: Option<(s3dp_core::select::SelectMode, u32)>,
     /// Mode the overlay geometry was built for (rebuilt on mode / mesh change).
     fill_overlay: Option<s3dp_core::select::SelectMode>,
+    /// Frame in which a view last ran the Polygon Fill hover (to clear a stale highlight).
+    fill_hover_frame: u64,
     frame: u64,
     /// Last texture-space dab of a brush stroke on the UV view (texels).
     last_dab_uv: Option<egui::Pos2>,
@@ -165,6 +167,7 @@ impl App {
             fill_stroke: None,
             fill_hover: None,
             fill_overlay: None,
+            fill_hover_frame: 0,
             frame: 0,
             last_dab_uv: None,
             split_uv: false,
@@ -439,7 +442,7 @@ impl App {
         self.topology();
         let topo = self.topology.as_ref().unwrap();
         let wire3d = boundary_edges(&self.mesh, topo, mode, false);
-        let wire_uv = boundary_edges(&self.mesh, topo, mode, true);
+        let wire_uv = s3dp_core::select::boundary_edges_by_set(&self.mesh, topo, mode, true);
         let tint: Vec<s3dp_render::TintVertex> = if mode == SelectMode::Face {
             Vec::new()
         } else {
@@ -460,6 +463,7 @@ impl App {
         };
         let rs = self.render_state.clone();
         self.viewport.set_overlay(&rs.device, &wire3d, &wire_uv, &tint);
+        self.viewport.set_highlight(&rs.device, &[], 0);
         self.fill_overlay = Some(mode);
         self.fill_hover = None;
     }
@@ -496,21 +500,24 @@ impl App {
         // Highlight what a click would fill.
         let group = hit.and_then(|t| self.topology().group_of(mode, t));
         let hover = group.map(|g| (mode, g));
+        self.fill_hover_frame = self.frame;
         if hover != self.fill_hover {
             self.fill_hover = hover;
-            let idx = match hit {
+            let (idx, set) = match hit {
                 Some(t) => {
                     let tris = self.topology().triangles_with(mode, t);
-                    s3dp_core::select::triangle_indices(&self.mesh, &tris)
+                    let set = self.topology().set.get(t as usize).copied().unwrap_or(0) as usize;
+                    (s3dp_core::select::triangle_indices(&self.mesh, &tris), set)
                 }
-                None => Vec::new(),
+                None => (Vec::new(), 0),
             };
-            self.viewport.set_highlight(&rs.device, &idx);
+            self.viewport.set_highlight(&rs.device, &idx, set);
         }
         let alt = ui.input(|i| i.modifiers.alt);
         let invert = ui.input(|i| i.modifiers.command);
         let pressing = (response.dragged_by(egui::PointerButton::Primary) || response.clicked_by(egui::PointerButton::Primary)) && !alt;
-        if pressing {
+        if pressing && hit.is_some() {
+            // Start the stroke on the first hit (a click on empty space adds no undo step).
             if self.fill_stroke.is_none() {
                 let add = self.fill_add != invert;
                 match self.viewport.begin_stroke(&rs.device, &rs.queue, self.fill_brush(add)) {
@@ -606,12 +613,16 @@ impl App {
         let full = ui.available_rect_before_wrap();
         // "3D + UV": the flat texture as a square on the right, the 3D view in the rest.
         let mut rect = full;
+        let mut uv_rect = None;
         if self.split_uv && full.width() > 200.0 {
             let side = full.height().min(full.width() * 0.5).floor();
             rect.max.x = full.max.x - side - 3.0;
-            let uv_rect = egui::Rect::from_min_size(egui::pos2(full.max.x - side, full.center().y - side / 2.0), egui::vec2(side, side));
+            let r = egui::Rect::from_min_size(egui::pos2(full.max.x - side, full.center().y - side / 2.0), egui::vec2(side, side));
             ui.painter().rect_filled(full, 0.0, egui::Color32::from_rgb(9, 9, 11));
-            self.uv_panel(ui, uv_rect);
+            // Input now (its dabs / fills are applied by the 3D render below), image after it.
+            let resp = ui.allocate_rect(r, egui::Sense::click_and_drag());
+            self.uv_input(ui, &resp);
+            uv_rect = Some(r);
         }
         let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
         self.aspect = rect.width() / rect.height().max(1.0);
@@ -643,6 +654,9 @@ impl App {
         ui.painter().image(tex, rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
         self.sync_thumbnails();
 
+        if let Some(r) = uv_rect {
+            self.uv_panel(ui, r);
+        }
         self.viewport_overlay(ui, rect);
         if self.direction_drag.is_some() {
             let painter = ui.painter_at(rect);
@@ -669,9 +683,8 @@ impl App {
     }
 
     /// Flat UV texture of a texture set, shaded like the viewport (material modes: base color).
+    /// Draws the flat UV view (after the 3D render, so it shows this frame's changes).
     fn uv_panel(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
-        let resp = ui.allocate_rect(rect, egui::Sense::click_and_drag());
-        self.uv_input(ui, &resp);
         let sets = self.viewport.paint.sets.len();
         self.uv_set = self.uv_set.min(sets.saturating_sub(1));
         let ppp = ui.ctx().pixels_per_point();
@@ -752,7 +765,8 @@ impl App {
                     let total = last.distance(target);
                     let mut walked = 0.0;
                     let mut dabs = Vec::new();
-                    while last.distance(target) >= spacing {
+                    // At most DAB_BUDGET per frame; the rest continues next frame from `last`.
+                    while last.distance(target) >= spacing && dabs.len() < DAB_BUDGET {
                         last += (target - last).normalized() * spacing;
                         walked += spacing;
                         let k = if total > 0.0 { walked / total } else { 1.0 };
@@ -888,7 +902,7 @@ impl App {
             let total = last.distance(target);
             let mut dabs = Vec::new();
             let mut walked = 0.0;
-            while last.distance(target) >= spacing {
+            while last.distance(target) >= spacing && dabs.len() < DAB_BUDGET {
                 last += (target - last).normalized() * spacing;
                 walked += spacing;
                 let k = if total > 0.0 { walked / total } else { 1.0 };
@@ -1068,6 +1082,10 @@ impl App {
     }
 }
 
+/// Dabs placed per frame at most (the GPU dab buffer holds 1024); a longer swipe continues
+/// on the next frame instead of leaving a gap.
+const DAB_BUDGET: usize = 900;
+
 /// Starts the native Wayland tablet reader on eframe's display (None elsewhere).
 #[cfg(target_os = "linux")]
 fn start_tablet(cc: &eframe::CreationContext<'_>) -> Option<s3dp_tablet::wayland::Tablet> {
@@ -1140,6 +1158,12 @@ impl eframe::App for App {
         if self.tool == Tool::PolygonFill && self.fill_overlay != Some(self.fill_mode) {
             self.build_fill_overlay();
         }
+        // Strokes of a tool that is no longer active end now (tool switched mid-stroke).
+        if !matches!(self.tool, Tool::Brush | Tool::Eraser) && (self.last_dab.is_some() || self.last_dab_uv.is_some()) {
+            self.viewport.paint.end_stroke();
+            self.last_dab = None;
+            self.last_dab_uv = None;
+        }
         // A fill stroke ends when the button is up, wherever it was released.
         if self.fill_stroke.is_some_and(|f| f < self.frame) && !ctx.input(|i| i.pointer.primary_down()) {
             self.viewport.paint.end_stroke();
@@ -1163,6 +1187,12 @@ impl eframe::App for App {
         ui_export::export_window(self, &ctx);
         crate::ui_env::window(self, &ctx);
         crate::ui_content::dialogs(self, &ctx);
+        // No view ran the Polygon Fill hover this frame (pointer elsewhere): drop the highlight.
+        if self.fill_hover.is_some() && (self.tool != Tool::PolygonFill || self.fill_hover_frame != self.frame) {
+            self.fill_hover = None;
+            let rs = self.render_state.clone();
+            self.viewport.set_highlight(&rs.device, &[], 0);
+        }
         if self.viewport.take_bake_finished() {
             self.bake.has_baked = true;
             self.viewport.paint.touch();

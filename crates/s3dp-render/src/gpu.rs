@@ -227,3 +227,18 @@ pub fn fullscreen_pipeline(
 pub fn tex_entry(binding: u32, v: &wgpu::TextureView) -> wgpu::BindGroupEntry<'_> {
     wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::TextureView(v) }
 }
+
+/// Instance settings used everywhere: on Windows the DX12 backend compiles shaders with the
+/// bundled DXC (the default FXC fails on the effect shaders).
+pub fn configure_instance(desc: &mut wgpu::InstanceDescriptor) {
+    if cfg!(windows) && std::env::var_os("WGPU_DX12_COMPILER").is_none() {
+        desc.backend_options.dx12.shader_compiler = wgpu::Dx12Compiler::StaticDxc;
+    }
+}
+
+/// A wgpu instance with [`configure_instance`] applied (tests, offscreen tools).
+pub fn new_instance() -> wgpu::Instance {
+    let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+    configure_instance(&mut desc);
+    wgpu::Instance::new(desc)
+}

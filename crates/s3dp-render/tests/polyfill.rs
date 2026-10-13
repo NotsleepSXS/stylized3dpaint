@@ -6,7 +6,7 @@ use s3dp_render::{Brush, ShadingMode, Viewport, wgpu};
 const TEX: u32 = 256;
 
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::default();
+    let instance = s3dp_render::gpu::new_instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
     pollster::block_on(adapter.request_device(&Default::default())).ok()
 }
@@ -96,7 +96,7 @@ fn overlay_highlight_and_wireframe() {
     let plain = vp.read_color(&device, &queue).unwrap().2;
     // Highlight every triangle: the centre pixel turns orange.
     let all: Vec<u32> = (0..mesh.indices.len() as u32 / 3).collect();
-    vp.set_highlight(&device, &s3dp_core::select::triangle_indices(&mesh, &all));
+    vp.set_highlight(&device, &s3dp_core::select::triangle_indices(&mesh, &all), 0);
     vp.render(&device, &queue, size, &cam, ShadingMode::Unlit);
     let off = vp.read_color(&device, &queue).unwrap().2;
     assert_eq!(off, plain, "no overlay while show_overlay is off");
@@ -136,7 +136,7 @@ fn overlay_sheet() {
             let g = if mode == SelectMode::Island { &topo.island } else { &topo.element };
             mesh.indices.chunks_exact(3).enumerate().flat_map(|(t, tri)| tri.iter().map(move |&v| (v, group_color(g[t])))).map(|(v, color)| s3dp_render::TintVertex { position: mesh.vertices[v as usize].position, uv: mesh.vertices[v as usize].uv, color }).collect()
         };
-        vp.set_overlay(&device, &boundary_edges(&mesh, &topo, mode, false), &boundary_edges(&mesh, &topo, mode, true), &tint);
+        vp.set_overlay(&device, &boundary_edges(&mesh, &topo, mode, false), &s3dp_core::select::boundary_edges_by_set(&mesh, &topo, mode, true), &tint);
         vp.render(&device, &queue, [w, h], &cam, ShadingMode::Unlit);
         frames.push(vp.read_color(&device, &queue).unwrap().2);
         let what = s3dp_render::Preview { mask_of: None, uv: true, set: 0, shading: Some(ShadingMode::Unlit), overlay: true };

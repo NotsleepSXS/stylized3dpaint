@@ -189,6 +189,10 @@ pub fn pick_uv(mesh: &Mesh, set: usize, uv: Vec2) -> Option<u32> {
         let p = |k: usize| Vec2::from(mesh.vertices[mesh.indices[3 * t + k] as usize].uv);
         let (a, b, c) = (p(0), p(1), p(2));
         let cross = |o: Vec2, x: Vec2, y: Vec2| (x - o).perp_dot(y - o);
+        // Collapsed UV triangles (hidden faces) contain nothing.
+        if cross(a, b, c).abs() < 1e-12 {
+            continue;
+        }
         let (d1, d2, d3) = (cross(a, b, uv), cross(b, c, uv), cross(c, a, uv));
         let neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
         let pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
@@ -246,11 +250,19 @@ pub fn wire_edges_uv(mesh: &Mesh) -> Vec<u32> {
 /// Part mode the open borders of each part. `uv_space` keys adjacency by vertex index (seams
 /// are borders in the UV view) instead of by 3D position.
 pub fn boundary_edges(mesh: &Mesh, topo: &Topology, mode: SelectMode, uv_space: bool) -> Vec<u32> {
+    boundary_edges_by_set(mesh, topo, mode, uv_space).concat()
+}
+
+/// [`boundary_edges`] split per texture set (index = set); edges of different sets never
+/// join, even where their UVs coincide.
+pub fn boundary_edges_by_set(mesh: &Mesh, topo: &Topology, mode: SelectMode, uv_space: bool) -> Vec<Vec<u32>> {
     let b = mesh.bounds();
     let q = ((b.max - b.min).max_element() * 1e-5).max(1e-9);
     let key = |v: u32| -> (i64, i64, i64) {
         if uv_space {
-            (v as i64, 0, 0)
+            // By UV: vertices split only for hard normals (same UV) stay joined.
+            let u = Vec2::from(mesh.vertices[v as usize].uv) * 1e6;
+            (u.x.round() as i64, u.y.round() as i64, 0)
         } else {
             let p = Vec3::from(mesh.vertices[v as usize].position) / q;
             (p.x.round() as i64, p.y.round() as i64, p.z.round() as i64)
@@ -261,21 +273,23 @@ pub fn boundary_edges(mesh: &Mesh, topo: &Topology, mode: SelectMode, uv_space: 
         SelectMode::Element => &topo.element,
         SelectMode::Island => &topo.island,
     };
-    // edge key -> (first occurrence as vertex pair, groups of the triangles using it)
-    let mut edges: HashMap<((i64, i64, i64), (i64, i64, i64)), ((u32, u32), Vec<u32>)> = HashMap::new();
+    // (set, edge key) -> (first occurrence as vertex pair, groups of the triangles using it)
+    type Key = (u32, (i64, i64, i64), (i64, i64, i64));
+    let mut edges: HashMap<Key, ((u32, u32), Vec<u32>)> = HashMap::new();
     for (t, tri) in mesh.indices.chunks_exact(3).enumerate() {
         let g = groups.get(t).copied().unwrap_or(t as u32);
+        let set = topo.set.get(t).copied().unwrap_or(0);
         for (a, c) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
             let (ka, kc) = (key(a), key(c));
-            let e = edges.entry((ka.min(kc), ka.max(kc))).or_insert(((a, c), Vec::new()));
+            let e = edges.entry((set, ka.min(kc), ka.max(kc))).or_insert(((a, c), Vec::new()));
             e.1.push(g);
         }
     }
-    let mut out = Vec::new();
-    for ((a, c), gs) in edges.into_values() {
+    let mut out = vec![Vec::new(); mesh.parts.len().max(1)];
+    for ((set, _, _), ((a, c), gs)) in edges {
         let border = gs.len() == 1 || gs.iter().any(|g| *g != gs[0]);
-        if border {
-            out.extend([a, c]);
+        if border && let Some(list) = out.get_mut(set as usize) {
+            list.extend([a, c]);
         }
     }
     out
@@ -377,5 +391,58 @@ mod tests {
         assert!(lo.x <= 0.3 && hi.x >= 0.3 && lo.y <= 0.6 && hi.y >= 0.6);
         assert_eq!(triangle_indices(&m, &[tri]).len(), 3);
         assert!(!wire_edges(&m).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod perf {
+    /// `cargo test --release -p s3dp-core pick_timing -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn pick_timing() {
+        let m = crate::Mesh::uv_sphere(512, 256); // ~260k triangles
+        let t = std::time::Instant::now();
+        for _ in 0..10 {
+            let _ = super::pick_ray(&m, glam::Vec3::new(0.0, 0.0, 5.0), glam::Vec3::NEG_Z);
+        }
+        println!("{} tris: {:?} per pick", m.indices.len() / 3, t.elapsed() / 10);
+        let t = std::time::Instant::now();
+        let topo = super::Topology::build(&m);
+        println!("topology {:?}", t.elapsed());
+        let t = std::time::Instant::now();
+        let _ = topo.triangles_with(super::SelectMode::Face, 0);
+        println!("group {:?}", t.elapsed());
+    }
+}
+
+#[cfg(test)]
+mod review_fixes {
+    use super::*;
+
+    #[test]
+    fn collapsed_uv_triangle_does_not_catch_clicks() {
+        let mut m = Mesh::cube();
+        // Collapse the first triangle's UVs to one point.
+        for k in 0..3 {
+            let v = m.indices[k] as usize;
+            m.vertices[v].uv = [0.9, 0.9];
+        }
+        // Duplicate the collapsed vertices so other triangles keep their UVs.
+        let t = pick_uv(&m, 0, Vec2::new(0.5, 0.75));
+        assert_ne!(t, Some(0), "degenerate triangle 0 must not be picked");
+    }
+
+    #[test]
+    fn hard_edge_splits_are_not_uv_borders() {
+        // Split every vertex per triangle (flat shading, same UVs): island borders in UV must
+        // stay the island outline, not every polygon edge.
+        let s = Mesh::uv_sphere(12, 6);
+        let mut flat = s.clone();
+        flat.vertices = s.indices.iter().map(|&i| s.vertices[i as usize]).collect();
+        flat.indices = (0..flat.vertices.len() as u32).collect();
+        let (ts, tf) = (Topology::build(&s), Topology::build(&flat));
+        let a = boundary_edges(&s, &ts, SelectMode::Island, true).len();
+        let b = boundary_edges(&flat, &tf, SelectMode::Island, true).len();
+        assert_eq!(a, b, "same island outline with and without the normal splits");
     }
 }

@@ -4,7 +4,7 @@ use s3dp_core::{ChannelId, ChannelValues, Mesh, NodeKind, OrbitCamera, ParamValu
 use s3dp_render::{Brush, ShadingMode, Viewport, wgpu};
 
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::default();
+    let instance = s3dp_render::gpu::new_instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
     pollster::block_on(adapter.request_device(&Default::default())).ok()
 }

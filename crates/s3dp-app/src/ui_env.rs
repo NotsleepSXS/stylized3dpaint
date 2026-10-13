@@ -399,7 +399,7 @@ mod tests {
     #[test]
     #[ignore]
     fn env_sheet() {
-        let instance = egui_wgpu::wgpu::Instance::default();
+        let instance = s3dp_render::gpu::new_instance();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else { return };
         let Ok((device, queue)) = pollster::block_on(adapter.request_device(&Default::default())) else { return };
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/test/monkey_crate.glb");

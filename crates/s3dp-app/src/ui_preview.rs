@@ -324,7 +324,7 @@ mod tests {
     /// Every built-in effect builds and renders in the sample scene (content and mask).
     #[test]
     fn every_effect_previews_on_the_sample_cube() {
-        let instance = egui_wgpu::wgpu::Instance::default();
+        let instance = s3dp_render::gpu::new_instance();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else { return };
         let Ok((device, queue)) = pollster::block_on(adapter.request_device(&Default::default())) else { return };
         let mut scene = SampleScene::new(&device, &queue, Shape::Cube);
@@ -355,7 +355,7 @@ mod tests {
     #[test]
     #[ignore]
     fn sample_sheet() {
-        let instance = egui_wgpu::wgpu::Instance::default();
+        let instance = s3dp_render::gpu::new_instance();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else { return };
         let Ok((device, queue)) = pollster::block_on(adapter.request_device(&Default::default())) else { return };
         let mut frames = Vec::new();
@@ -387,7 +387,7 @@ mod tests {
     #[test]
     #[ignore]
     fn stack_sheet() {
-        let instance = egui_wgpu::wgpu::Instance::default();
+        let instance = s3dp_render::gpu::new_instance();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else { return };
         let Ok((device, queue)) = pollster::block_on(adapter.request_device(&Default::default())) else { return };
         let fx = |id: u64, def: &str| s3dp_core::registry().get(def).unwrap().instantiate(id);

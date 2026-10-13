@@ -86,6 +86,9 @@ impl ContentUi {
     pub fn reload(&mut self) {
         self.materials = None;
         self.masks = None;
+        // User presets are keyed by file path: a deleted / re-saved file must re-render.
+        self.thumbs.retain(|k, _| k.contains(":builtin:"));
+        self.queue.clear();
     }
 }
 
@@ -422,7 +425,7 @@ mod tests {
     /// Every built-in preset renders without effect errors; writes a contact sheet.
     #[test]
     fn builtin_presets_render() {
-        let instance = egui_wgpu::wgpu::Instance::default();
+        let instance = s3dp_render::gpu::new_instance();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else { return };
         let Ok((device, queue)) = pollster::block_on(adapter.request_device(&Default::default())) else { return };
         let mut scene = ThumbScene::new(&device, &queue);

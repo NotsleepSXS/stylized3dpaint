@@ -14,6 +14,11 @@ half.workspace = true
 log.workspace = true
 image.workspace = true
 
+# Windows / DX12: compile shaders with the bundled DXC (FXC fails on the effect shaders with
+# "no storage type for block output"), no extra DLL needed.
+[target.'cfg(windows)'.dependencies]
+wgpu = { version = "30", default-features = false, features = ["static-dxc"] }
+
 [dev-dependencies]
 pollster = "1"
 glam.workspace = true

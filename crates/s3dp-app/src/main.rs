@@ -42,7 +42,11 @@ fn main() -> eframe::Result {
     std::panic::set_hook(Box::new(|info| {
         let bt = std::backtrace::Backtrace::force_capture();
         log::error!("panic: {info}\n{bt}");
-        report_fatal(&format!("Stylized3DPaint stopped because of an error:\n{info}"));
+        // Background threads (HDRI loading, export…) report through the UI; only a panic on
+        // the main thread stops the app.
+        if std::thread::current().name() == Some("main") {
+            report_fatal(&format!("Stylized3DPaint stopped because of an error:\n{info}"));
+        }
     }));
     log::info!("Stylized3DPaint {} on {} ({})", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH);
     let initial = std::env::args_os().nth(1).map(std::path::PathBuf::from);
@@ -58,6 +62,7 @@ fn main() -> eframe::Result {
     }
     // Baking high-poly meshes needs big storage buffers: ask for what the GPU supports.
     if let egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup {
+        s3dp_render::gpu::configure_instance(&mut setup.instance_descriptor);
         let base = setup.device_descriptor.clone();
         setup.device_descriptor = std::sync::Arc::new(move |adapter| {
             let mut desc = base(adapter);
