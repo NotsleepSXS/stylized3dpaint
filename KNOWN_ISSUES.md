@@ -8,7 +8,8 @@ steps; Height / AO and all other effect tests pass. The data points to the neste
 `continue` (surface lookups in `sm_strokes` / `sm_edge_cav` / `blur_world`) running differently
 there. Real GPUs normally run through Vulkan (same path as Linux); not yet confirmed on a
 hardware DX12 device. The two `stylize` tests skip themselves on WARP. Workaround if seen on a
-real GPU: start with `WGPU_BACKEND=vulkan`.
+real GPU: start with `WGPU_BACKEND=vulkan`. The `wear` tests are flaky on WARP too (same code passes
+and fails between runs: `rust` content unchanged / seam), stable on Vulkan.
 
 ## Stylized bake: artifacts on every edge / polygon (reported 2026-10-12) — FIXED 2026-10-13
 
