@@ -25,12 +25,22 @@ struct StrokeOut {
     col: vec4<f32>,
     // weighted value / hue jitter (x, y), max coverage (z)
     jit: vec3<f32>,
+    // Soft-weighted channel average (rgb * m, m): continuous across stroke borders, used for
+    // the material channels so they get no hard steps (they become bump / reflections).
+    soft: vec4<f32>,
+    // Paint relief: soft-weighted mean of per-stroke plate heights (sum h*w) and the weight
+    // sum; plates meet with smooth transitions instead of steps.
+    relief: f32,
+    relief_w: f32,
 };
 
 fn sm_strokes(c: Ctx) -> StrokeOut {
     var o: StrokeOut;
     o.col = vec4<f32>(0.0);
     o.jit = vec3<f32>(0.0);
+    o.soft = vec4<f32>(0.0);
+    o.relief = 0.0;
+    o.relief_w = 0.0;
     let g = max(p_br_scale() * radius(), 1e-5);
     let q = c.p / g;
     let ci = vec3<i32>(floor(q));
@@ -56,21 +66,48 @@ fn sm_strokes(c: Ctx) -> StrokeOut {
                 let cxy = vec2<i32>(round(ct_px.xy));
                 if (ct_px.z > 0.5 && distance(world(cxy), cs) < g * 0.5 + tw * 2.0) { ns = world_normal(cxy); }
                 let facing = dot(ns, c.n);
-                let nf = smoothstep(ct - 0.08, ct + 0.02, facing);
+                // Fades out smoothly with the distance from the stroke plane (no hard cut on
+                // curved surfaces).
+                let nf = smoothstep(ct - 0.08, ct + 0.02, facing) * (1.0 - smoothstep(0.7 * g, g, abs(hgt)));
                 if (nf <= 0.0) { continue; }
                 let sz = mix(1.0, 0.5 + h1.y, p_br_scale_rand());
-                let hl = clamp(p_br_size_x() * sz * 0.62, 0.05, 1.0) * g;
-                let hw = clamp(p_br_size_y() * sz * 0.62, 0.03, 1.0) * g;
+                // Strokes whose cell point is far from the surface get smaller, so tangent extent
+                // and height stay inside |off| < g: every stroke that can touch this point has
+                // its centre within one cell and the 3x3x3 search never cuts one (no steps).
+                let shrink = sqrt(max(1.0 - (hgt / g) * (hgt / g), 0.0));
+                let hl = clamp(p_br_size_x() * sz * 0.62, 0.05, 0.85) * g * shrink;
+                let hw = clamp(p_br_size_y() * sz * 0.62, 0.03, 0.85) * g * shrink;
+                if (hw < 1e-6) { continue; }
                 let ang = radians(p_br_rotation()) + (h1.z - 0.5) * 2.0 * PI * p_br_rot_rand();
-                let d = sm_rotate(sm_ref_dir(ns), ns, ang);
-                let e = cross(ns, d);
+                // Orientation from our own (continuous) normal: the centre normal is only used
+                // for the turn threshold, so a failed centre lookup cannot rotate the stroke.
+                let d = sm_rotate(sm_ref_dir(c.n), c.n, ang);
+                let e = cross(c.n, d);
                 let off = c.p - cs;
                 let a = dot(off, d) / hl;
                 let b = dot(off, e) / hw;
                 // Tapered ellipse: rounder head, thinner tail.
                 let taper = 1.0 - 0.35 * clamp(a, -1.0, 1.0) * clamp(a, -1.0, 1.0) - 0.15 * a;
                 let dd = a * a + (b / max(taper, 0.2)) * (b / max(taper, 0.2));
-                let m = (1.0 - smoothstep(0.65, 1.0, dd)) * nf;
+                // Anti-aliased edge: the soft band is never narrower than ~1.5 texels.
+                let band = clamp(3.0 * tw / max(hw, 1e-6), 0.35, 0.9);
+                let m = (1.0 - smoothstep(1.0 - band, 1.0, dd)) * nf;
+                // Paint relief: a smooth dome per stroke, independent of the colour averaging
+                // below (which can fail near island borders and would cut the dome).
+                let dome = clamp(1.0 - dd, 0.0, 1.0);
+                if (dome > 0.0) {
+                    // Paint plate with a soft edge at least ~2.5 texels wide and a slight dome.
+                    let band_r = clamp(5.0 * tw / max(hw, 1e-6), 0.35, 0.95);
+                    let plate = (1.0 - smoothstep(1.0 - band_r, 1.0, dd)) * (0.75 + 0.25 * dome) * nf;
+                    let bristle_r = gnoise(vec3<f32>(b * 3.0, h0.y * 37.0, h0.z * 11.0), s + 9u);
+                    // Bristles only when the stroke is wide enough to resolve them (no aliasing).
+                    let resolve = smoothstep(6.0, 16.0, hw / max(tw, 1e-9));
+                    // Equal weights: transitions between overlapping plates spread over the
+                    // whole soft edge (a large weight spread would squeeze them into 1 texel).
+                    let wr = plate;
+                    o.relief = o.relief + wr * ((h0.y - 0.5) * 1.6 + bristle_r * 0.25 * resolve) * (0.85 + 0.15 * dome);
+                    o.relief_w = o.relief_w + wr;
+                }
                 if (m <= 0.001) { continue; }
                 // Average the input along the stroke axis (flat painterly color).
                 var sum = vec3<f32>(0.0);
@@ -89,6 +126,7 @@ fn sm_strokes(c: Ctx) -> StrokeOut {
                 // Bristle streaks along the stroke.
                 let bristle = gnoise(vec3<f32>(b * 3.0, h0.y * 37.0, h0.z * 11.0), s + 9u);
                 o.col = o.col + vec4<f32>(sum / cnt * w, w);
+                o.soft = o.soft + vec4<f32>(sum / cnt * m, m);
                 o.jit = vec3<f32>(o.jit.xy + vec2<f32>((h0.y - 0.5) * 0.3 + bristle * 0.08, (h0.z - 0.5) * 0.06) * w, max(o.jit.z, m));
             }
         }
@@ -137,6 +175,12 @@ fn sm_contrast(v: f32, k: f32) -> f32 { return smoothstep(0.25 * k, 1.0 - 0.6 * 
 
 // ---------------------------------------------------------------- main
 
+/// Plate height under this point: soft-weighted mean faded in by the coverage.
+fn sm_relief(so: StrokeOut) -> f32 {
+    if (so.relief_w <= 1e-5) { return 0.0; }
+    return so.relief / so.relief_w * clamp(so.relief_w, 0.0, 1.0);
+}
+
 /// Non-color channels (ids: 1 roughness, 2 metallic, 3 normal, 4 height, 5 AO, 6 emissive,
 /// 7 opacity, 8+ user): stroke averaging + relief / variation, edges & cavities, crisp metal,
 /// roughness bands, lighting occlusion into AO.
@@ -147,13 +191,17 @@ fn sm_material_channel(c: Ctx, v_in: vec4<f32>, ch: u32, gs: f32, ec_on: f32) ->
     let st_br = gs * p_br_strength() * p_ch_strokes();
     if (st_br > 0.0 && ch != 7u) {
         let so = sm_strokes(c);
-        if (so.col.a > 0.0) {
-            var mean = so.col.rgb / so.col.a;
-            let jit = so.jit.x / so.col.a;
+        if (so.soft.a > 1e-4) {
+            // Soft average: no steps between strokes (smooth bump, clean reflections).
+            var mean = so.soft.rgb / so.soft.a;
+            let cover = clamp(so.soft.a, 0.0, 1.0) * st_br;
             if (ch == 3u) { mean = normalize(mean * 2.0 - 1.0 + vec3<f32>(0.0, 0.0, 1e-4)) * 0.5 + 0.5; }
-            if (ch == 1u) { mean = mean + vec3<f32>(jit * p_br_rough_var()); }
-            if (ch == 4u) { mean = mean + vec3<f32>(jit * p_br_height() * 0.5); }
-            v = vec4<f32>(mix(v.rgb, mean, clamp(so.jit.z, 0.0, 1.0) * st_br), v.a);
+            if (ch == 1u) { mean = mean + vec3<f32>(sm_relief(so) * 0.5 * p_br_rough_var()); }
+            v = vec4<f32>(mix(v.rgb, mean, cover), v.a);
+        }
+        // Paint relief: smooth domes per stroke.
+        if (ch == 4u) {
+            v = vec4<f32>(v.rgb + vec3<f32>(sm_relief(so) * p_br_height() * 0.1 * gs * p_br_strength()), v.a);
         }
     }
     // Edges & cavities.
