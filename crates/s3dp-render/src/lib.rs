@@ -2,6 +2,7 @@
 
 pub mod bake;
 pub mod engine;
+pub mod env;
 pub mod gpu;
 pub mod paint;
 pub mod viewport;

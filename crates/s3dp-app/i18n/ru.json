@@ -295,5 +295,20 @@
  "Layer up to this effect": "Слой до этого эффекта",
  "Bake height into the normal map": "Перевести карту высот в карту нормалей",
  "Game engines do not use the Height map for shading: without this the model looks flat after export": "Игровые движки не используют карту высот для освещения: без этого после экспорта модель выглядит плоской",
- "Strength": "Сила"
+ "Strength": "Сила",
+ "Environment": "Окружение",
+ "Loading": "Загрузка",
+ "Rotation": "Поворот",
+ "Also: Shift + right-drag in the viewport": "Ещё: Shift + перетаскивание правой кнопкой во вьюпорте",
+ "Exposure": "Экспозиция",
+ "Background": "Фон",
+ "Show the HDRI behind the model": "Показывать HDRI за моделью",
+ "Blur": "Размытие",
+ "HDRI folder:": "Папка HDRI:",
+ "(built-in only)": "(только встроенные)",
+ "Built-in only": "Только встроенные",
+ ".hdr / .exr equirectangular maps; a map with a built-in's name replaces it (e.g. a 2K version).": "Карты .hdr / .exr (равнопромежуточные); карта с именем встроенной заменяет её (например, версия 2K).",
+ "Environment (HDRI lighting) · Shift + right-drag rotates it": "Окружение (освещение HDRI) · Shift + правая кнопка — повернуть",
+ "Auto exposure": "Автоэкспозиция",
+ "Brings every map to the same average brightness": "Приводит все карты к одинаковой средней яркости"
 }

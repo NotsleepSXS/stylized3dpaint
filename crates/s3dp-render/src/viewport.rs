@@ -75,6 +75,13 @@ struct Globals {
     view_proj: [[f32; 4]; 4],
     eye: [f32; 4],
     params: [f32; 4],
+    inv_view_proj: [[f32; 4]; 4],
+    /// Irradiance SH (rgb).
+    sh: [[f32; 4]; 9],
+    /// x: rotation (rad), y: exposure (linear), z: max lod, w: environment lighting on
+    env: [f32; 4],
+    /// x: background on, y: background lod, z: -, w: -
+    env2: [f32; 4],
 }
 
 struct GpuMesh {
@@ -110,6 +117,14 @@ pub struct Viewport {
     last_frame: Option<(OrbitCamera, [u32; 2])>,
     globals: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+    bgl: wgpu::BindGroupLayout,
+    /// Lighting environment (shared between views).
+    env: std::sync::Arc<crate::env::GpuEnv>,
+    env_ready: bool,
+    env_sampler: wgpu::Sampler,
+    pub env_settings: crate::env::EnvSettings,
+    /// Fullscreen HDRI background.
+    bg_pipeline: wgpu::RenderPipeline,
     mesh: Option<GpuMesh>,
     targets: Option<Targets>,
     /// Extra views (0: Properties preview, 1: the viewport's UV panel): own targets and
@@ -122,7 +137,7 @@ pub struct Viewport {
 struct PreviewTargets {
     targets: Targets,
     globals: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
+    #[allow(dead_code)]
     bgl: wgpu::BindGroupLayout,
 }
 
@@ -146,28 +161,54 @@ impl Viewport {
         });
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("viewport globals"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                // Environment (equirect, specular mip chain) and its sampler.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
         });
+        let env_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("environment"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            ..Default::default()
+        });
+        // Placeholder until the first frame uploads the neutral studio (needs the queue).
+        let env = std::sync::Arc::new(crate::env::GpuEnv::placeholder(device));
         let globals = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("viewport globals"),
             size: std::mem::size_of::<Globals>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("viewport globals"),
-            layout: &bgl,
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() }],
-        });
+        let bind_group = globals_group(device, &bgl, &globals, &env, &env_sampler);
         // 7 material channels, baked AO, baked normal, inspect slot, then the sampler.
         let textures = 10u32;
         let mut view_entries: Vec<wgpu::BindGroupLayoutEntry> = (0..textures)
@@ -283,6 +324,23 @@ impl Viewport {
             multiview_mask: None,
             cache: None,
         });
+        let bg_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("viewport background"),
+            layout: Some(&depth_layout),
+            vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_bg"), compilation_options: Default::default(), buffers: &[] },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState { count: SAMPLES, ..Default::default() },
+            fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some("fs_bg"), compilation_options: Default::default(), targets: &[Some(COLOR_FORMAT.into())] }),
+            multiview_mask: None,
+            cache: None,
+        });
         Self {
             pipeline,
             depth_pipeline,
@@ -297,6 +355,12 @@ impl Viewport {
             last_frame: None,
             globals,
             bind_group,
+            bgl,
+            env,
+            env_ready: false,
+            env_sampler,
+            env_settings: Default::default(),
+            bg_pipeline,
             mesh: None,
             targets: None,
             previews: [None, None],
@@ -430,6 +494,40 @@ impl Viewport {
         true
     }
 
+    /// Uses `env` for lighting (and the background) from now on.
+    pub fn set_environment(&mut self, device: &wgpu::Device, env: std::sync::Arc<crate::env::GpuEnv>) {
+        self.env = env;
+        self.env_ready = true;
+        self.bind_group = globals_group(device, &self.bgl, &self.globals, &self.env, &self.env_sampler);
+        self.shown = None;
+    }
+
+    /// The current lighting environment.
+    pub fn environment(&self) -> std::sync::Arc<crate::env::GpuEnv> {
+        self.env.clone()
+    }
+
+    fn ensure_env(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if !self.env_ready {
+            let env = std::sync::Arc::new(crate::env::GpuEnv::neutral(device, queue));
+            self.set_environment(device, env);
+        }
+    }
+
+    fn globals_for(&self, camera: &OrbitCamera, aspect: f32, mode: ShadingMode, uv: bool, main: bool) -> Globals {
+        let view_proj: Mat4 = camera.projection(aspect) * camera.view();
+        let es = &self.env_settings;
+        Globals {
+            view_proj: view_proj.to_cols_array_2d(),
+            eye: camera.eye().extend(1.0).into(),
+            params: [mode.gpu_id() as f32, 8.0, uv as u32 as f32, 0.0],
+            inv_view_proj: view_proj.inverse().to_cols_array_2d(),
+            sh: self.env.sh,
+            env: [es.rotation, 2f32.powf(es.exposure) * if es.auto { self.env.auto_exposure } else { 1.0 }, self.env.max_lod, 1.0],
+            env2: [(main && es.background) as u32 as f32, es.blur.clamp(0.0, 1.0) * self.env.max_lod, 0.0, 0.0],
+        }
+    }
+
     /// Id of the main view's last redraw (changes whenever its image changes).
     pub fn frame_id(&self) -> u64 {
         self.frame_id
@@ -439,6 +537,7 @@ impl Viewport {
     /// Does not apply dabs or recomposite; returns the view and whether it was recreated.
     pub fn render_preview(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, slot: usize, size: [u32; 2], camera: &OrbitCamera, what: Preview) -> Option<(&wgpu::TextureView, bool)> {
         let slot = slot.min(self.previews.len() - 1);
+        self.ensure_env(device, queue);
         let mesh = self.mesh.as_ref()?;
         let size = [size[0].max(1), size[1].max(1)];
         let mut recreated = false;
@@ -461,17 +560,11 @@ impl Viewport {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("preview globals"),
-                layout: &self.pipeline.get_bind_group_layout(0),
-                entries: &[wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() }],
-            });
-            self.previews[slot] = Some(PreviewTargets { targets: make_targets(device, size), globals, bind_group, bgl });
+            self.previews[slot] = Some(PreviewTargets { targets: make_targets(device, size), globals, bgl });
             recreated = true;
         }
         let pv = self.previews[slot].as_ref()?;
         let aspect = size[0] as f32 / size[1] as f32;
-        let view_proj: Mat4 = camera.projection(aspect) * camera.view();
         let mode = match (what.shading, what.mask_of, what.uv) {
             (Some(ShadingMode::Lit | ShadingMode::Toon), _, true) => ShadingMode::Unlit,
             (Some(m), _, _) => m,
@@ -479,12 +572,9 @@ impl Viewport {
             (None, None, true) => ShadingMode::Unlit,
             (None, None, false) => ShadingMode::Lit,
         };
-        let globals = Globals {
-            view_proj: view_proj.to_cols_array_2d(),
-            eye: camera.eye().extend(1.0).into(),
-            params: [mode.gpu_id() as f32, 8.0, what.uv as u32 as f32, 0.0],
-        };
+        let globals = self.globals_for(camera, aspect, mode, what.uv, false);
         queue.write_buffer(&pv.globals, 0, bytemuck::bytes_of(&globals));
+        let pv_group = globals_group(device, &self.bgl, &pv.globals, &self.env, &self.env_sampler);
         let inspect = match what.shading {
             Some(m) => m.inspect(self.paint.active),
             None => what.mask_of.map_or(Inspect::None, Inspect::Mask),
@@ -518,7 +608,7 @@ impl Viewport {
                 multiview_mask: None,
             });
             pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &pv.bind_group, &[]);
+            pass.set_bind_group(0, &pv_group, &[]);
             pass.set_vertex_buffer(0, mesh.vertices.slice(..));
             pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
             for (range, bg) in &sets {
@@ -542,13 +632,9 @@ impl Viewport {
     ) -> (&wgpu::TextureView, bool) {
         let size = [size[0].max(1), size[1].max(1)];
         let recreated = self.ensure_targets(device, size);
+        self.ensure_env(device, queue);
         let aspect = size[0] as f32 / size[1] as f32;
-        let view_proj: Mat4 = camera.projection(aspect) * camera.view();
-        let globals = Globals {
-            view_proj: view_proj.to_cols_array_2d(),
-            eye: camera.eye().extend(1.0).into(),
-            params: [mode.gpu_id() as f32, 8.0, 0.0, 0.0],
-        };
+        let globals = self.globals_for(camera, aspect, mode, false, true);
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
 
         let inspect = mode.inspect(self.paint.active);
@@ -576,7 +662,7 @@ impl Viewport {
             self.paint.update(device, queue, &mut encoder, &mesh.vertices, &mesh.indices, scene);
         }
         // Skip drawing when nothing visible changed (egui repaints on every mouse move).
-        let shown = (format!("{camera:?}"), size, mode);
+        let shown = (format!("{camera:?}{:?}{}", self.env_settings, self.env.name), size, mode);
         let changed = self.paint.take_changed();
         if !recreated && !changed && self.shown.as_ref() == Some(&shown) {
             queue.submit([encoder.finish()]);
@@ -609,6 +695,11 @@ impl Viewport {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            if self.env_settings.background && matches!(mode, ShadingMode::Lit) {
+                pass.set_pipeline(&self.bg_pipeline);
+                pass.set_bind_group(0, &self.bind_group, &[]);
+                pass.draw(0..3, 0..1);
+            }
             if let Some(mesh) = &self.mesh {
                 pass.set_pipeline(&self.pipeline);
                 pass.set_bind_group(0, &self.bind_group, &[]);
@@ -677,4 +768,16 @@ fn make_targets(device: &wgpu::Device, size: [u32; 2]) -> Targets {
         resolve_tex,
         scene_depth: make("scene depth", SCENE_DEPTH_FORMAT, 1, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING),
     }
+}
+
+fn globals_group(device: &wgpu::Device, bgl: &wgpu::BindGroupLayout, globals: &wgpu::Buffer, env: &crate::env::GpuEnv, sampler: &wgpu::Sampler) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("viewport globals"),
+        layout: bgl,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&env.view) },
+            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
+        ],
+    })
 }

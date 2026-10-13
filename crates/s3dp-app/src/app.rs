@@ -71,6 +71,8 @@ pub struct App {
     viewport_tex: Option<egui::TextureId>,
     /// Sample-shape scene of the effect preview (created on first use).
     pub sample: Option<crate::ui_preview::SampleScene>,
+    /// Lighting environment (HDRI) state.
+    pub env: crate::ui_env::EnvUi,
     /// Viewport mode: 3D only, or 3D next to the flat UV texture.
     pub split_uv: bool,
     uv_tex: Option<egui::TextureId>,
@@ -135,6 +137,7 @@ impl App {
             viewport,
             viewport_tex: None,
             sample: None,
+            env: crate::ui_env::EnvUi::new(),
             split_uv: false,
             uv_tex: None,
             uv_key: None,
@@ -559,6 +562,9 @@ impl App {
                     ui.selectable_value(&mut self.split_uv, false, "3D").on_hover_text(t("Model only (U)"));
                     ui.selectable_value(&mut self.split_uv, true, "3D + UV").on_hover_text(t("Model and its flat texture side by side (U)"));
                     ui.separator();
+                    if ui.selectable_label(self.env.open, egui_phosphor::regular::SUN_HORIZON).on_hover_text(t("Environment (HDRI lighting) · Shift + right-drag rotates it")).clicked() {
+                        self.env.open = !self.env.open;
+                    }
                     ui.label(egui::RichText::new(egui_phosphor::regular::CUBE).color(theme::TEXT_DIM));
                     egui::ComboBox::from_id_salt("shading").selected_text(t(self.shading.label())).width(150.0).show_ui(ui, |ui| ui_panels::shading_menu(self, ui));
                 });
@@ -674,7 +680,11 @@ impl App {
             let primary = response.dragged_by(egui::PointerButton::Primary);
             let middle = response.dragged_by(egui::PointerButton::Middle);
             let secondary = response.dragged_by(egui::PointerButton::Secondary);
-            if (alt && primary && self.last_dab.is_none()) || (middle && !alt && !shift) {
+            if shift && secondary && !alt {
+                // Rotate the lighting environment (like Substance: Shift + right drag).
+                let r = self.env.prefs.rotation_deg + delta.x * 0.4;
+                self.env.prefs.rotation_deg = (r + 180.0).rem_euclid(360.0) - 180.0;
+            } else if (alt && primary && self.last_dab.is_none()) || (middle && !alt && !shift) {
                 self.camera.orbit(delta.x, delta.y);
             } else if (alt && middle) || (shift && middle) || (secondary && !alt) {
                 self.camera.pan(delta.x, delta.y, response.rect.height());
@@ -875,6 +885,7 @@ impl eframe::App for App {
 
     fn on_exit(&mut self) {
         crate::ui_dock::save_layout(&self.dock);
+        crate::ui_env::save_prefs(&self.env.prefs);
         // Stop the tablet thread while winit's Wayland display is still connected.
         #[cfg(target_os = "linux")]
         {
@@ -891,6 +902,7 @@ impl eframe::App for App {
         if self.allow_close {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
+        crate::ui_env::poll(self, &ctx);
         let dropped = ui.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).find(|p| !p.as_os_str().is_empty()));
         if let Some(path) = dropped {
             self.open_path(path);
@@ -907,6 +919,7 @@ impl eframe::App for App {
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| crate::ui_dock::show(self, ui));
         ui_bake::bake_window(self, &ctx);
         ui_export::export_window(self, &ctx);
+        crate::ui_env::window(self, &ctx);
         if self.viewport.take_bake_finished() {
             self.bake.has_baked = true;
             self.viewport.paint.touch();

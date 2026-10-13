@@ -48,6 +48,7 @@ Supported model formats: glTF/GLB, FBX, OBJ.
 | New / open / save / export | Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+E |
 | Bake mesh maps | Ctrl+B |
 | Viewport: 3D / 3D + UV | U |
+| Rotate the HDRI lighting | Shift + right-drag |
 | Pen (Wayland) | tip paints with pressure, eraser end erases, lower button orbits, upper button = RMB |
 
 ## Features
@@ -72,6 +73,7 @@ Supported model formats: glTF/GLB, FBX, OBJ.
 - **Seamless (3D) mode** for every effect that reads neighbouring texels (blur, warp, slope blur, edge wear, AO, curvature, Stylization…): lookups continue across UV seams through precomputed seam links (on by default)
 
   ![UV vs seamless slope blur across a UV seam](docs/images/seamless_uv_vs_3d.png)
+- **HDRI lighting** (image-based: SH diffuse + GGX-prefiltered reflections, ACES tone mapping, auto exposure): 8 built-in Poly Haven maps, your own `.hdr` / `.exr` folder, rotation (also Shift + right-drag), exposure, optional blurred background
 - **Native Wayland pen tablet** support (`zwp_tablet_v2`): pressure → size / flow, eraser end, barrel buttons
 - `.s3dp` project files (zip: mesh + layer PNGs + baked maps + JSON)
 - Export presets: Unreal (ORM / separate), Unity URP / HDRP, Godot, glTF, Stylized Unlit,
@@ -84,6 +86,7 @@ Blend-mode formulas and the dark UI palette are adapted from
 [PhotoCraft](https://github.com/storytold/photocraft) (MIT OR Apache-2.0); the tablet input
 design follows its `photocraft-tablet` notes.
 Icons: [Phosphor](https://phosphoricons.com) via `egui-phosphor` (MIT).
+Built-in HDRIs: [Poly Haven](https://polyhaven.com) (CC0), see [assets/hdri/LICENSE.md](assets/hdri/LICENSE.md).
 
 ## Roadmap
 

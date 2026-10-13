@@ -63,6 +63,11 @@ impl SampleScene {
         s
     }
 
+    /// Lights the sample with the app's environment.
+    pub fn set_environment(&mut self, device: &egui_wgpu::wgpu::Device, env: std::sync::Arc<s3dp_render::env::GpuEnv>) {
+        self.vp.set_environment(device, env);
+    }
+
     fn load_shape(&mut self, device: &egui_wgpu::wgpu::Device, queue: &egui_wgpu::wgpu::Queue, shape: Shape) {
         let mesh = shape.mesh();
         self.vp.set_mesh(device, queue, &mesh, TEX);
@@ -220,7 +225,14 @@ pub fn show(app: &mut crate::app::App, ui: &mut egui::Ui, stack: &PreviewStack, 
         }
     });
     ui.data_mut(|d| d.insert_persisted(shape_id, shape));
-    let scene = app.sample.get_or_insert_with(|| SampleScene::new(&rs.device, &rs.queue, shape));
+    let env = app.env.current.clone();
+    let scene = app.sample.get_or_insert_with(|| {
+        let mut s = SampleScene::new(&rs.device, &rs.queue, shape);
+        if let Some(env) = env {
+            s.set_environment(&rs.device, env);
+        }
+        s
+    });
     if scene.shape != shape {
         scene.load_shape(&rs.device, &rs.queue, shape);
     }

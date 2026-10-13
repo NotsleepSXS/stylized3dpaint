@@ -7,6 +7,7 @@ mod ui_bake;
 mod ui_dock;
 mod ui_export;
 mod ui_effects;
+mod ui_env;
 mod ui_layers;
 mod ui_panels;
 mod ui_preview;
