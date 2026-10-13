@@ -71,3 +71,20 @@ fn fs_dab(i: UvOut) -> @location(0) vec4<f32> {
     if (acc <= 0.0) { discard; }
     return vec4<f32>(acc, 0.0, 0.0, acc);
 }
+
+// Brush dabs in texture space (painting on the UV view): dab xy and radius in texels of the
+// set; every covered texel of the triangles is tested against them.
+@fragment
+fn fs_dab_uv(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
+    let px = frag.xy;
+    var acc = 0.0;
+    let count = u32(p.brush.y);
+    for (var k = 0u; k < count; k = k + 1u) {
+        let dab = dabs[k];
+        let t = distance(px, dab.xy) / max(dab.z, 0.5);
+        let a = (1.0 - smoothstep(p.brush.x, 1.0, t)) * dab.w;
+        acc = acc + (1.0 - acc) * a;
+    }
+    if (acc <= 0.0) { discard; }
+    return vec4<f32>(acc, 0.0, 0.0, acc);
+}

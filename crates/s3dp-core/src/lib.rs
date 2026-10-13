@@ -9,6 +9,7 @@ pub mod legacy;
 pub mod import;
 pub mod mesh;
 pub mod seams;
+pub mod select;
 
 pub use bake::{BakeSettings, BakeStyle, BakedMap};
 pub use camera::OrbitCamera;

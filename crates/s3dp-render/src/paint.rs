@@ -225,6 +225,9 @@ enum ComposeKind {
 
 pub struct Painter {
     dab_pipeline: wgpu::RenderPipeline,
+    /// Texture-space dabs (UV view painting) and full-coverage triangle fill (Polygon Fill).
+    dab_uv_pipeline: wgpu::RenderPipeline,
+    fill_pipeline: wgpu::RenderPipeline,
     stroke_pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
     layer_pipeline: wgpu::RenderPipeline,
     mask_item_pipeline: wgpu::RenderPipeline,
@@ -253,6 +256,10 @@ pub struct Painter {
     redo: Vec<Snapshot>,
     stroke: Option<Stroke>,
     pending: Vec<[f32; 4]>,
+    /// Texture-space dabs for one set: (set, [x, y, radius, flow] in texels).
+    pending_uv: Option<(usize, Vec<[f32; 4]>)>,
+    /// Triangles to fill: (set, vertex indices, 3 per triangle).
+    pending_fill: Vec<(usize, Vec<u32>)>,
     /// Bumped while a node / mask item is painted (its textures change in place).
     versions: HashMap<u64, u64>,
 
@@ -327,6 +334,8 @@ impl Painter {
         let full = |label, module: &wgpu::ShaderModule, fs, format| gpu::fullscreen_pipeline(device, label, module, fs, format);
         Self {
             dab_pipeline: uv_pipeline("dab", "fs_dab", STROKE_FORMAT, Some(wgpu::BlendState { color: accumulate, alpha: accumulate })),
+            dab_uv_pipeline: uv_pipeline("dab uv", "fs_dab_uv", STROKE_FORMAT, Some(wgpu::BlendState { color: accumulate, alpha: accumulate })),
+            fill_pipeline: uv_pipeline("polygon fill", "fs_coverage", STROKE_FORMAT, Some(wgpu::BlendState { color: accumulate, alpha: accumulate })),
             stroke_pipelines: [PAINT_FORMAT, MASK_PAINT_FORMAT]
                 .into_iter()
                 .map(|f| (f, full("stroke composite", &composite, "fs_composite", f)))
@@ -379,6 +388,8 @@ impl Painter {
             redo: Vec::new(),
             stroke: None,
             pending: Vec::new(),
+            pending_uv: None,
+            pending_fill: Vec::new(),
             versions: HashMap::new(),
             content_cache: HashMap::new(),
             mask_cache: HashMap::new(),
@@ -1052,6 +1063,35 @@ impl Painter {
         }));
     }
 
+    /// Texture-space dabs on texture set `set` (painting on the UV view): `[x, y, pressure]`
+    /// in texels; `radius` in texels. Pressure scales radius / flow like screen dabs.
+    pub fn add_dabs_uv(&mut self, set: usize, dabs: &[[f32; 3]], radius: f32) {
+        let Some(stroke) = &self.stroke else { return };
+        let b = &stroke.brush;
+        let list = match &mut self.pending_uv {
+            Some((s, l)) if *s == set => l,
+            _ => {
+                self.pending_uv = Some((set, Vec::new()));
+                &mut self.pending_uv.as_mut().unwrap().1
+            }
+        };
+        let room = MAX_DABS.saturating_sub(list.len());
+        list.extend(dabs.iter().take(room).map(|d| {
+            let p = if d[2].is_finite() { d[2].clamp(0.0, 1.0) } else { 1.0 };
+            let r = if b.pressure_size { radius * (b.min_size.clamp(0.0, 1.0) + (1.0 - b.min_size.clamp(0.0, 1.0)) * p) } else { radius };
+            let f = if b.pressure_flow { b.flow * p } else { b.flow };
+            [d[0], d[1], r.max(0.5), f]
+        }));
+    }
+
+    /// Fills whole triangles of texture set `set` (vertex indices, 3 per triangle) into the
+    /// current stroke at full strength (Polygon Fill).
+    pub fn fill_triangles(&mut self, set: usize, indices: Vec<u32>) {
+        if self.stroke.is_some() && !indices.is_empty() {
+            self.pending_fill.push((set, indices));
+        }
+    }
+
     pub fn end_stroke(&mut self) {
         self.stroke = None;
         self.changed = true;
@@ -1105,6 +1145,63 @@ impl Painter {
             pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(set.index_range(), 0, 0..1);
         }
+        self.composite_stroke(encoder);
+    }
+
+    /// Applies texture-space dabs and polygon fills of the current stroke.
+    fn flush_texture_space(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, vertices: &wgpu::Buffer, indices: &wgpu::Buffer) {
+        if self.stroke.is_none() {
+            self.pending_uv = None;
+            self.pending_fill.clear();
+            return;
+        }
+        let mut touched = false;
+        if let Some((set, dabs)) = self.pending_uv.take()
+            && !dabs.is_empty()
+            && let Some(s) = self.sets.get(set)
+        {
+            let hardness = self.stroke.as_ref().map_or(0.5, |st| st.brush.hardness.clamp(0.0, 0.99));
+            let params = DabParams { view_proj: Mat4::IDENTITY.to_cols_array_2d(), eye: [0.0; 4], viewport: [0.0; 4], brush: [hardness, dabs.len() as f32, 0.0, 0.0] };
+            queue.write_buffer(&self.dab_params, 0, bytemuck::bytes_of(&params));
+            queue.write_buffer(&self.dab_buffer, 0, bytemuck::cast_slice(&dabs));
+            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("dab uv"),
+                layout: &self.dab_uv_pipeline.get_bind_group_layout(0),
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: self.dab_params.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 2, resource: self.dab_buffer.as_entire_binding() },
+                ],
+            });
+            let mut pass = gpu::pass(encoder, &s.stroke_mask, wgpu::LoadOp::Load);
+            pass.set_pipeline(&self.dab_uv_pipeline);
+            pass.set_bind_group(0, &bg, &[]);
+            pass.set_vertex_buffer(0, vertices.slice(..));
+            pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(s.index_range(), 0, 0..1);
+            touched = true;
+        }
+        for (set, tris) in std::mem::take(&mut self.pending_fill) {
+            let Some(s) = self.sets.get(set) else { continue };
+            let buf = wgpu::util::DeviceExt::create_buffer_init(device, &wgpu::util::BufferInitDescriptor {
+                label: Some("polygon fill"),
+                contents: bytemuck::cast_slice(&tris),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+            let mut pass = gpu::pass(encoder, &s.stroke_mask, wgpu::LoadOp::Load);
+            pass.set_pipeline(&self.fill_pipeline);
+            pass.set_vertex_buffer(0, vertices.slice(..));
+            pass.set_index_buffer(buf.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..tris.len() as u32, 0, 0..1);
+            touched = true;
+        }
+        if touched {
+            self.composite_stroke(encoder);
+        }
+    }
+
+    /// Blends the stroke mask into the stroke's target textures.
+    fn composite_stroke(&mut self, encoder: &mut wgpu::CommandEncoder) {
+        let Some(stroke) = &self.stroke else { return };
         for t in &stroke.targets {
             let mut pass = gpu::pass(encoder, &t.after, wgpu::LoadOp::Load);
             pass.set_pipeline(&self.stroke_pipelines[&t.format]);
@@ -1134,6 +1231,7 @@ impl Painter {
             Some((depth, camera, px)) => self.flush_dabs(device, queue, encoder, vertices, indices, depth, camera, px),
             None => self.pending.clear(),
         }
+        self.flush_texture_space(device, queue, encoder, vertices, indices);
         self.compose(device, encoder);
         self.update_thumbs(device, queue, encoder);
     }
