@@ -125,6 +125,15 @@ pub struct Viewport {
     pub env_settings: crate::env::EnvSettings,
     /// Fullscreen HDRI background.
     bg_pipeline: wgpu::RenderPipeline,
+    /// Polygon Fill overlays: wireframe (line list of unique edges) and highlighted triangles.
+    wire_pipeline: wgpu::RenderPipeline,
+    highlight_pipeline: wgpu::RenderPipeline,
+    wire: Option<(wgpu::Buffer, u32)>,
+    wire_uv: Option<(wgpu::Buffer, u32)>,
+    highlight: Option<(wgpu::Buffer, u32)>,
+    /// Draw the wireframe and highlight (Polygon Fill tool active).
+    pub show_overlay: bool,
+    overlay_rev: u64,
     mesh: Option<GpuMesh>,
     targets: Option<Targets>,
     /// Extra views (0: Properties preview, 1: the viewport's UV panel): own targets and
@@ -151,6 +160,8 @@ pub struct Preview {
     pub set: usize,
     /// Show like this shading mode instead (material modes show base color in UV).
     pub shading: Option<ShadingMode>,
+    /// Also draw the Polygon Fill overlays (when `show_overlay` is on).
+    pub overlay: bool,
 }
 
 impl Viewport {
@@ -341,6 +352,32 @@ impl Viewport {
             multiview_mask: None,
             cache: None,
         });
+        let overlay = |label, topology, fs| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&depth_layout),
+                vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_overlay"), compilation_options: Default::default(), buffers: &[Some(vertex_layout.clone())] },
+                primitive: wgpu::PrimitiveState { topology, ..Default::default() },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: wgpu::MultisampleState { count: SAMPLES, ..Default::default() },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(fs),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState { format: COLOR_FORMAT, blend: Some(wgpu::BlendState::ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let wire_pipeline = overlay("wireframe", wgpu::PrimitiveTopology::LineList, "fs_wire");
+        let highlight_pipeline = overlay("highlight", wgpu::PrimitiveTopology::TriangleList, "fs_highlight");
         Self {
             pipeline,
             depth_pipeline,
@@ -361,6 +398,13 @@ impl Viewport {
             env_sampler,
             env_settings: Default::default(),
             bg_pipeline,
+            wire_pipeline,
+            highlight_pipeline,
+            wire: None,
+            wire_uv: None,
+            highlight: None,
+            show_overlay: false,
+            overlay_rev: 0,
             mesh: None,
             targets: None,
             previews: [None, None],
@@ -385,6 +429,15 @@ impl Viewport {
         let scale = self.paint.scale;
         self.baker.rasterize_geometry(device, queue, &self.paint.sets, &vertices, &indices, scale.bbox_min, scale.bbox_size);
         self.paint.build_seam_links(device, queue);
+        let upload = |edges: Vec<u32>| {
+            (!edges.is_empty()).then(|| {
+                let b = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("wireframe"), contents: bytemuck::cast_slice(&edges), usage: wgpu::BufferUsages::INDEX });
+                (b, edges.len() as u32)
+            })
+        };
+        self.wire = upload(s3dp_core::select::wire_edges(mesh));
+        self.wire_uv = upload(s3dp_core::select::wire_edges_uv(mesh));
+        self.highlight = None;
         self.paint.baked_changed();
         self.bake = None;
         self.mesh = Some(GpuMesh { vertices, indices, index_count: mesh.indices.len() as u32 });
@@ -492,6 +545,33 @@ impl Viewport {
         }
         self.targets = Some(make_targets(device, size));
         true
+    }
+
+    /// Triangles to highlight (vertex indices, 3 per triangle); empty clears.
+    pub fn set_highlight(&mut self, device: &wgpu::Device, indices: &[u32]) {
+        self.highlight = (!indices.is_empty()).then(|| {
+            let b = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("highlight"), contents: bytemuck::cast_slice(indices), usage: wgpu::BufferUsages::INDEX });
+            (b, indices.len() as u32)
+        });
+        self.overlay_rev += 1;
+    }
+
+    fn draw_overlay(&self, pass: &mut wgpu::RenderPass<'_>, group: &wgpu::BindGroup, mesh: &GpuMesh, uv: bool) {
+        if !self.show_overlay {
+            return;
+        }
+        pass.set_bind_group(0, group, &[]);
+        pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+        if let Some((b, n)) = if uv { &self.wire_uv } else { &self.wire } {
+            pass.set_pipeline(&self.wire_pipeline);
+            pass.set_index_buffer(b.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..*n, 0, 0..1);
+        }
+        if let Some((b, n)) = &self.highlight {
+            pass.set_pipeline(&self.highlight_pipeline);
+            pass.set_index_buffer(b.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..*n, 0, 0..1);
+        }
     }
 
     /// Uses `env` for lighting (and the background) from now on.
@@ -615,6 +695,9 @@ impl Viewport {
                 pass.set_bind_group(1, bg, &[]);
                 pass.draw_indexed(range.clone(), 0, 0..1);
             }
+            if what.overlay {
+                self.draw_overlay(&mut pass, &pv_group, mesh, what.uv);
+            }
         }
         queue.submit([encoder.finish()]);
         Some((&self.previews[slot].as_ref()?.targets.resolve, recreated))
@@ -662,7 +745,7 @@ impl Viewport {
             self.paint.update(device, queue, &mut encoder, &mesh.vertices, &mesh.indices, scene);
         }
         // Skip drawing when nothing visible changed (egui repaints on every mouse move).
-        let shown = (format!("{camera:?}{:?}{}", self.env_settings, self.env.name), size, mode);
+        let shown = (format!("{camera:?}{:?}{}{}{}", self.env_settings, self.env.name, self.show_overlay, self.overlay_rev), size, mode);
         let changed = self.paint.take_changed();
         if !recreated && !changed && self.shown.as_ref() == Some(&shown) {
             queue.submit([encoder.finish()]);
@@ -710,6 +793,7 @@ impl Viewport {
                     pass.set_bind_group(1, &set.view_bg, &[]);
                     pass.draw_indexed(range, 0, 0..1);
                 }
+                self.draw_overlay(&mut pass, &self.bind_group, mesh, false);
             }
         }
         if let Some(mesh) = &self.mesh {

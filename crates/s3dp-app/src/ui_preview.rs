@@ -256,7 +256,7 @@ pub fn show(app: &mut crate::app::App, ui: &mut egui::Ui, stack: &PreviewStack, 
     let (view3d, recreated3d) = scene.vp.render(&rs.device, &rs.queue, if uv { [8, 8] } else { size }, &scene.cam, ShadingMode::Lit);
     let view3d = view3d.clone();
     let (view, recreated, slot) = if uv {
-        let what = s3dp_render::Preview { mask_of: None, uv: true, set: 0, shading: Some(ShadingMode::Unlit) };
+        let what = s3dp_render::Preview { mask_of: None, uv: true, set: 0, shading: Some(ShadingMode::Unlit), overlay: false };
         match scene.vp.render_preview(&rs.device, &rs.queue, 0, size, &scene.cam, what) {
             Some((v, r)) => (v.clone(), r, 1),
             None => return,

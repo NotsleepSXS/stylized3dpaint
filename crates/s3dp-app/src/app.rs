@@ -16,6 +16,8 @@ pub enum Tool {
     Brush,
     Eraser,
     Eyedropper,
+    /// Fill whole polygons / elements / UV islands (masks: reveal or hide them).
+    PolygonFill,
 }
 
 impl Tool {
@@ -25,6 +27,7 @@ impl Tool {
             Tool::Brush => i::PAINT_BRUSH,
             Tool::Eraser => i::ERASER,
             Tool::Eyedropper => i::EYEDROPPER,
+            Tool::PolygonFill => i::POLYGON,
         }
     }
 
@@ -33,6 +36,7 @@ impl Tool {
             Tool::Brush => format!("{} (B)", t("Brush")),
             Tool::Eraser => format!("{} (E)", t("Eraser")),
             Tool::Eyedropper => format!("{} (I) — {}", t("Eyedropper"), t("picks the whole material")),
+            Tool::PolygonFill => format!("{} (P) — {}", t("Polygon Fill"), t("faces, parts or UV islands")),
         }
     }
 }
@@ -73,6 +77,17 @@ pub struct App {
     pub sample: Option<crate::ui_preview::SampleScene>,
     /// Lighting environment (HDRI) state.
     pub env: crate::ui_env::EnvUi,
+    /// Polygon Fill: what a click selects, and add (reveal / paint) vs remove (hide / erase).
+    pub fill_mode: s3dp_core::select::SelectMode,
+    pub fill_add: bool,
+    topology: Option<s3dp_core::select::Topology>,
+    /// Groups already filled in the current fill stroke, the frame it started, hovered group.
+    fill_done: std::collections::HashSet<u32>,
+    fill_stroke: Option<u64>,
+    fill_hover: Option<(s3dp_core::select::SelectMode, u32)>,
+    frame: u64,
+    /// Last texture-space dab of a brush stroke on the UV view (texels).
+    last_dab_uv: Option<egui::Pos2>,
     /// Viewport mode: 3D only, or 3D next to the flat UV texture.
     pub split_uv: bool,
     uv_tex: Option<egui::TextureId>,
@@ -138,6 +153,14 @@ impl App {
             viewport_tex: None,
             sample: None,
             env: crate::ui_env::EnvUi::new(),
+            fill_mode: Default::default(),
+            fill_add: true,
+            topology: None,
+            fill_done: Default::default(),
+            fill_stroke: None,
+            fill_hover: None,
+            frame: 0,
+            last_dab_uv: None,
             split_uv: false,
             uv_tex: None,
             uv_key: None,
@@ -195,6 +218,8 @@ impl App {
     }
 
     fn set_mesh(&mut self, mesh: Mesh) {
+        self.topology = None;
+        self.fill_hover = None;
         let rs = &self.render_state;
         self.viewport.set_mesh(&rs.device, &rs.queue, &mesh, self.texture_size);
         self.status = format!(
@@ -270,6 +295,8 @@ impl App {
                 }
                 self.texture_size = self.viewport.texture_size();
                 self.mesh = mesh;
+                self.topology = None;
+                self.fill_hover = None;
                 self.needs_frame = true;
                 self.thumbs.clear();
                 self.layers_ui.reset_for(&self.viewport.paint.doc);
@@ -389,6 +416,91 @@ impl App {
         self.bg_color = [1.0; 3];
     }
 
+    fn topology(&mut self) -> &s3dp_core::select::Topology {
+        if self.topology.is_none() {
+            self.topology = Some(s3dp_core::select::Topology::build(&self.mesh));
+        }
+        self.topology.as_ref().unwrap()
+    }
+
+    /// Triangle under a viewport position (camera ray).
+    fn pick_triangle_3d(&self, pos: egui::Pos2, rect: egui::Rect) -> Option<u32> {
+        let ndc = egui::vec2((pos.x - rect.left()) / rect.width() * 2.0 - 1.0, 1.0 - (pos.y - rect.top()) / rect.height() * 2.0);
+        let (o, d) = camera_ray(&self.camera, rect.width() / rect.height().max(1.0), [ndc.x, ndc.y]);
+        s3dp_core::select::pick_ray(&self.mesh, o, d).map(|h| h.0)
+    }
+
+    /// Brush of a Polygon Fill stroke: masks get white (add, reveal) or black (remove, hide);
+    /// layers get the foreground material (add) or are erased (remove).
+    fn fill_brush(&self, add: bool) -> Brush {
+        let mut b = self.brush_for_stroke(1.0);
+        b.hardness = 1.0;
+        b.opacity = 1.0;
+        b.flow = 1.0;
+        b.pressure_size = false;
+        b.pressure_flow = false;
+        if matches!(self.viewport.paint.target, s3dp_render::EditTarget::MaskItem(_)) {
+            b.values.set(ChannelId::BaseColor, if add { [1.0; 3] } else { [0.0; 3] });
+            b.erase = false;
+        } else {
+            b.erase = !add;
+        }
+        b
+    }
+
+    /// Hover highlight and click / drag filling for a picked triangle (3D view or UV view).
+    pub(crate) fn polygon_fill_input(&mut self, ui: &egui::Ui, response: &egui::Response, hit: Option<u32>) {
+        let mode = self.fill_mode;
+        let rs = self.render_state.clone();
+        // Highlight what a click would fill.
+        let group = hit.and_then(|t| self.topology().group_of(mode, t));
+        let hover = group.map(|g| (mode, g));
+        if hover != self.fill_hover {
+            self.fill_hover = hover;
+            let idx = match hit {
+                Some(t) => {
+                    let tris = self.topology().triangles_with(mode, t);
+                    s3dp_core::select::triangle_indices(&self.mesh, &tris)
+                }
+                None => Vec::new(),
+            };
+            self.viewport.set_highlight(&rs.device, &idx);
+        }
+        let alt = ui.input(|i| i.modifiers.alt);
+        let invert = ui.input(|i| i.modifiers.command);
+        let pressing = (response.dragged_by(egui::PointerButton::Primary) || response.clicked_by(egui::PointerButton::Primary)) && !alt;
+        if pressing {
+            if self.fill_stroke.is_none() {
+                let add = self.fill_add != invert;
+                match self.viewport.begin_stroke(&rs.device, &rs.queue, self.fill_brush(add)) {
+                    Ok(()) => {
+                        self.fill_stroke = Some(self.frame);
+                        self.fill_done.clear();
+                    }
+                    Err(msg) => {
+                        self.status = t(msg).to_owned();
+                        return;
+                    }
+                }
+            }
+            if let (Some(t), Some(g)) = (hit, group)
+                && self.fill_done.insert(g)
+            {
+                let tris = self.topology().triangles_with(mode, t);
+                let set = self.topology().set.get(t as usize).copied().unwrap_or(0) as usize;
+                let idx = s3dp_core::select::triangle_indices(&self.mesh, &tris);
+                self.viewport.paint.fill_triangles(set, idx);
+            }
+        } else if let Some(started) = self.fill_stroke
+            && started < self.frame
+            && !response.dragged()
+        {
+            // End a frame later, after the queued fills were applied.
+            self.viewport.paint.end_stroke();
+            self.fill_stroke = None;
+        }
+    }
+
     /// Current pen pressure (1 for a mouse).
     fn pressure(&self) -> f32 {
         self.pen.map_or(1.0, |(p, _)| p)
@@ -500,6 +612,9 @@ impl App {
             let painter = ui.painter_at(rect);
             if self.tool == Tool::Eyedropper {
                 painter.text(pos + egui::vec2(10.0, -10.0), egui::Align2::LEFT_BOTTOM, egui_phosphor::regular::EYEDROPPER, egui::FontId::proportional(18.0), egui::Color32::WHITE);
+            } else if self.tool == Tool::PolygonFill {
+                let sign = if self.fill_add != ui.input(|i| i.modifiers.command) { "+" } else { "−" };
+                painter.text(pos + egui::vec2(10.0, -10.0), egui::Align2::LEFT_BOTTOM, format!("{} {sign}", egui_phosphor::regular::POLYGON), egui::FontId::proportional(16.0), egui::Color32::WHITE);
             } else {
                 painter.circle_stroke(pos, self.brush.size, egui::Stroke::new(2.0, egui::Color32::from_black_alpha(140)));
                 painter.circle_stroke(pos, self.brush.size, egui::Stroke::new(1.0, egui::Color32::WHITE));
@@ -514,7 +629,8 @@ impl App {
 
     /// Flat UV texture of a texture set, shaded like the viewport (material modes: base color).
     fn uv_panel(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
-        ui.allocate_rect(rect, egui::Sense::hover());
+        let resp = ui.allocate_rect(rect, egui::Sense::click_and_drag());
+        self.uv_input(ui, &resp);
         let sets = self.viewport.paint.sets.len();
         self.uv_set = self.uv_set.min(sets.saturating_sub(1));
         let ppp = ui.ctx().pixels_per_point();
@@ -522,7 +638,7 @@ impl App {
         let key = (self.viewport.frame_id(), self.shading, size, self.uv_set);
         if self.uv_key != Some(key) || self.uv_tex.is_none() {
             let rs = self.render_state.clone();
-            let what = s3dp_render::Preview { mask_of: None, uv: true, set: self.uv_set, shading: Some(self.shading) };
+            let what = s3dp_render::Preview { mask_of: None, uv: true, set: self.uv_set, shading: Some(self.shading), overlay: true };
             if let Some((view, recreated)) = self.viewport.render_preview(&rs.device, &rs.queue, 1, size, &self.camera, what) {
                 let mut renderer = rs.renderer.write();
                 match self.uv_tex {
@@ -551,6 +667,74 @@ impl App {
                     });
                 });
             });
+        }
+    }
+
+    /// Polygon Fill and brush / eraser strokes on the flat UV view.
+    fn uv_input(&mut self, ui: &egui::Ui, resp: &egui::Response) {
+        let rect = resp.rect;
+        let set = self.uv_set.min(self.viewport.paint.sets.len().saturating_sub(1));
+        let to_uv = |p: egui::Pos2| glam::Vec2::new((p.x - rect.left()) / rect.width(), (p.y - rect.top()) / rect.height());
+        let alt = ui.input(|i| i.modifiers.alt);
+        match self.tool {
+            Tool::PolygonFill => {
+                if resp.hovered() || resp.dragged() || resp.clicked() {
+                    let hit = resp.hover_pos().or_else(|| resp.interact_pointer_pos()).and_then(|p| s3dp_core::select::pick_uv(&self.mesh, set, to_uv(p)));
+                    self.polygon_fill_input(ui, resp, hit);
+                }
+            }
+            Tool::Brush | Tool::Eraser => {
+                let Some(tex) = self.viewport.paint.sets.get(set).map(|s| s.size as f32) else { return };
+                let to_texel = |p: egui::Pos2| {
+                    let uv = to_uv(p);
+                    egui::pos2(uv.x * tex, uv.y * tex)
+                };
+                // Same on-screen brush size as in 3D.
+                let radius = self.brush.size * tex / rect.width().max(1.0);
+                let rs = self.render_state.clone();
+                if resp.drag_started_by(egui::PointerButton::Primary) && !alt {
+                    if let Some(pos) = resp.interact_pointer_pos() {
+                        match self.viewport.begin_stroke(&rs.device, &rs.queue, self.brush_for_stroke(1.0)) {
+                            Ok(()) => {
+                                let p = to_texel(pos);
+                                self.viewport.paint.add_dabs_uv(set, &[[p.x, p.y, self.pressure()]], radius);
+                                self.last_dab_uv = Some(p);
+                                self.last_pressure = self.pressure();
+                            }
+                            Err(msg) => self.status = t(msg).to_owned(),
+                        }
+                    }
+                } else if let (true, Some(pos), Some(mut last)) = (resp.dragged_by(egui::PointerButton::Primary), resp.interact_pointer_pos(), self.last_dab_uv) {
+                    let target = to_texel(pos);
+                    let (p0, p1) = (self.last_pressure, self.pressure());
+                    let spacing = (radius * 0.12).max(0.75);
+                    let total = last.distance(target);
+                    let mut walked = 0.0;
+                    let mut dabs = Vec::new();
+                    while last.distance(target) >= spacing {
+                        last += (target - last).normalized() * spacing;
+                        walked += spacing;
+                        let k = if total > 0.0 { walked / total } else { 1.0 };
+                        dabs.push([last.x, last.y, p0 + (p1 - p0) * k]);
+                    }
+                    if !dabs.is_empty() {
+                        self.last_pressure = p0 + (p1 - p0) * (walked / total.max(1e-6)).min(1.0);
+                    }
+                    self.viewport.paint.add_dabs_uv(set, &dabs, radius);
+                    self.last_dab_uv = Some(last);
+                }
+                if self.last_dab_uv.is_some() && !resp.dragged_by(egui::PointerButton::Primary) {
+                    self.viewport.paint.end_stroke();
+                    self.last_dab_uv = None;
+                }
+                if let Some(pos) = resp.hover_pos() {
+                    // On top of the UV image (drawn after this).
+                    let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("uv_cursor"))).with_clip_rect(rect);
+                    painter.circle_stroke(pos, self.brush.size, egui::Stroke::new(2.0, egui::Color32::from_black_alpha(140)));
+                    painter.circle_stroke(pos, self.brush.size, egui::Stroke::new(1.0, egui::Color32::WHITE));
+                }
+            }
+            Tool::Eyedropper => {}
         }
     }
 
@@ -612,6 +796,14 @@ impl App {
                         }
                     });
                 }
+            }
+            return;
+        }
+
+        if self.tool == Tool::PolygonFill {
+            if response.hovered() || response.dragged() || response.clicked() {
+                let hit = response.hover_pos().or_else(|| response.interact_pointer_pos()).and_then(|pos| self.pick_triangle_3d(pos, response.rect));
+                self.polygon_fill_input(ui, response, hit);
             }
             return;
         }
@@ -756,6 +948,9 @@ impl App {
         if pressed(Key::I) {
             self.tool = Tool::Eyedropper;
         }
+        if pressed(Key::P) {
+            self.tool = Tool::PolygonFill;
+        }
         if pressed(Key::X) {
             self.swap_colors();
         }
@@ -899,6 +1094,13 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         crate::ui_env::poll(self, &ctx);
+        self.frame += 1;
+        self.viewport.show_overlay = self.tool == Tool::PolygonFill;
+        // A fill stroke ends when the button is up, wherever it was released.
+        if self.fill_stroke.is_some_and(|f| f < self.frame) && !ctx.input(|i| i.pointer.primary_down()) {
+            self.viewport.paint.end_stroke();
+            self.fill_stroke = None;
+        }
         let dropped = ui.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).find(|p| !p.as_os_str().is_empty()));
         if let Some(path) = dropped {
             self.open_path(path);
@@ -928,5 +1130,32 @@ impl eframe::App for App {
             ctx.request_repaint_after(std::time::Duration::from_millis(8));
         }
         self.confirm_dialog(ui);
+    }
+}
+
+/// World ray (origin at the eye, direction) through a point in normalized device coordinates.
+pub fn camera_ray(camera: &OrbitCamera, aspect: f32, ndc: [f32; 2]) -> (glam::Vec3, glam::Vec3) {
+    let inv = (camera.projection(aspect) * camera.view()).inverse();
+    let far = inv.project_point3(glam::Vec3::new(ndc[0], ndc[1], 1.0));
+    let eye = camera.eye();
+    (eye, (far - eye).normalize_or_zero())
+}
+
+#[cfg(test)]
+mod ray_tests {
+    use super::*;
+
+    #[test]
+    fn centre_ray_hits_the_framed_sphere() {
+        let mesh = Mesh::uv_sphere(24, 12);
+        let mut cam = OrbitCamera::default();
+        cam.frame(glam::Vec3::ZERO, 1.0, 1.5);
+        let (o, d) = camera_ray(&cam, 1.5, [0.0, 0.0]);
+        assert!(d.dot((glam::Vec3::ZERO - o).normalize()) > 0.999, "centre ray looks at the target");
+        let (_, dist) = s3dp_core::select::pick_ray(&mesh, o, d).expect("hits");
+        assert!((dist - (o.length() - 1.0)).abs() < 0.05, "front surface: {dist}");
+        // A corner ray misses the unit sphere.
+        let (o, d) = camera_ray(&cam, 1.5, [0.98, 0.98]);
+        assert!(s3dp_core::select::pick_ray(&mesh, o, d).is_none());
     }
 }

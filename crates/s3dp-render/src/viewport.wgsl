@@ -256,3 +256,25 @@ fn vs_pick(v: VsIn, @builtin(instance_index) set_index: u32) -> PickOut {
 fn fs_pick(i: PickOut) -> @location(0) vec4<f32> {
     return vec4<f32>(i.uv, f32(i.set_index + 1u), 1.0);
 }
+
+// Overlays for the Polygon Fill tool: wireframe lines and the highlighted triangles, in 3D
+// or flat in UV space (params.z), nudged towards the camera to sit on the surface.
+@vertex
+fn vs_overlay(v: VsIn) -> @builtin(position) vec4<f32> {
+    if (g.params.z > 0.5) {
+        return vec4<f32>(v.uv.x * 2.0 - 1.0, 1.0 - v.uv.y * 2.0, 0.4, 1.0);
+    }
+    var c = g.view_proj * vec4<f32>(v.position, 1.0);
+    c.z = c.z - 3e-4 * c.w;
+    return c;
+}
+
+@fragment
+fn fs_wire() -> @location(0) vec4<f32> {
+    return vec4<f32>(0.05, 0.05, 0.06, 0.55);
+}
+
+@fragment
+fn fs_highlight() -> @location(0) vec4<f32> {
+    return vec4<f32>(1.0, 0.45, 0.1, 0.38);
+}

@@ -226,6 +226,21 @@ pub fn wire_edges(mesh: &Mesh) -> Vec<u32> {
     out
 }
 
+/// Unique edges by vertex index (for the UV-space wireframe: seam vertices are separate
+/// there, so both sides of a seam keep their lines).
+pub fn wire_edges_uv(mesh: &Mesh) -> Vec<u32> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for t in mesh.indices.chunks_exact(3) {
+        for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+            if seen.insert((a.min(b), a.max(b))) {
+                out.extend([a, b]);
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

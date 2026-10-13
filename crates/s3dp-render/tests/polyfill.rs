@@ -79,3 +79,33 @@ fn texture_space_dabs_paint_where_asked() {
     let far = at(cx + 12, cy);
     assert!(far[1] > 0.1, "12 texels away untouched: {far:?}");
 }
+
+/// The Polygon Fill overlay: highlighted triangles tint the view, the wireframe darkens edges;
+/// both only while `show_overlay` is on.
+#[test]
+fn overlay_highlight_and_wireframe() {
+    let Some((device, queue)) = device() else { return };
+    let mesh = Mesh::uv_sphere(24, 12);
+    let mut vp = Viewport::new(&device);
+    vp.paint.throttle = false;
+    vp.set_mesh(&device, &queue, &mesh, 64);
+    let mut cam = OrbitCamera { yaw: 0.0, pitch: 0.0, ..Default::default() };
+    cam.frame(glam::Vec3::ZERO, 1.0, 1.0);
+    let size = [96u32, 96];
+    vp.render(&device, &queue, size, &cam, ShadingMode::Unlit);
+    let plain = vp.read_color(&device, &queue).unwrap().2;
+    // Highlight every triangle: the centre pixel turns orange.
+    let all: Vec<u32> = (0..mesh.indices.len() as u32 / 3).collect();
+    vp.set_highlight(&device, &s3dp_core::select::triangle_indices(&mesh, &all));
+    vp.render(&device, &queue, size, &cam, ShadingMode::Unlit);
+    let off = vp.read_color(&device, &queue).unwrap().2;
+    assert_eq!(off, plain, "no overlay while show_overlay is off");
+    vp.show_overlay = true;
+    vp.render(&device, &queue, size, &cam, ShadingMode::Unlit);
+    let on = vp.read_color(&device, &queue).unwrap().2;
+    let i = ((48 * 96 + 48) * 4) as usize;
+    println!("centre plain {:?} highlighted {:?}", &plain[i..i + 3], &on[i..i + 3]);
+    assert!(on[i] as i32 - on[i + 2] as i32 > 30, "orange tint on highlighted triangles");
+    let diff = plain.chunks_exact(4).zip(on.chunks_exact(4)).filter(|(a, b)| a != b).count();
+    assert!(diff > 1000, "overlay changes the image ({diff} px)");
+}

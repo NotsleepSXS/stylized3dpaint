@@ -312,5 +312,19 @@
  "Brings every map to the same average brightness": "Приводит все карты к одинаковой средней яркости",
  "Support the project on Boosty": "Поддержать проект на Boosty",
  "Source code, releases, issues (GitHub)": "Исходный код, релизы, ошибки (GitHub)",
- "B brush · E eraser · I eyedropper · [ ] size · X swap colors · D default colors\nAlt+LMB / MMB orbit · RMB / Shift+MMB pan · Wheel zoom · F frame\nF1–F5 viewport mode · Ctrl+Z / Ctrl+Shift+Z undo / redo\nCtrl+Shift+N new layer · Ctrl+G group · Ctrl+J duplicate · Del delete\nCtrl+B bake · Ctrl+Shift+E export · Ctrl+S save\nU viewport 3D / 3D + UV · Shift+RMB rotate the HDRI lighting": "B кисть · E ластик · I пипетка · [ ] размер · X поменять цвета · D цвета по умолчанию\nAlt+ЛКМ / СКМ вращение · ПКМ / Shift+СКМ сдвиг · колесо зум · F показать модель\nF1–F5 режим вьюпорта · Ctrl+Z / Ctrl+Shift+Z отмена / повтор\nCtrl+Shift+N новый слой · Ctrl+G в папку · Ctrl+J дубль · Del удалить\nCtrl+B запекание · Ctrl+Shift+E экспорт · Ctrl+S сохранить\nU вьюпорт 3D / 3D + UV · Shift+ПКМ повернуть HDRI-освещение"
+ "B brush · E eraser · I eyedropper · [ ] size · X swap colors · D default colors\nAlt+LMB / MMB orbit · RMB / Shift+MMB pan · Wheel zoom · F frame\nF1–F5 viewport mode · Ctrl+Z / Ctrl+Shift+Z undo / redo\nCtrl+Shift+N new layer · Ctrl+G group · Ctrl+J duplicate · Del delete\nCtrl+B bake · Ctrl+Shift+E export · Ctrl+S save\nU viewport 3D / 3D + UV · Shift+RMB rotate the HDRI lighting": "B кисть · E ластик · I пипетка · [ ] размер · X поменять цвета · D цвета по умолчанию\nAlt+ЛКМ / СКМ вращение · ПКМ / Shift+СКМ сдвиг · колесо зум · F показать модель\nF1–F5 режим вьюпорта · Ctrl+Z / Ctrl+Shift+Z отмена / повтор\nCtrl+Shift+N новый слой · Ctrl+G в папку · Ctrl+J дубль · Del удалить\nCtrl+B запекание · Ctrl+Shift+E экспорт · Ctrl+S сохранить\nU вьюпорт 3D / 3D + UV · Shift+ПКМ повернуть HDRI-освещение",
+ "Polygon Fill": "Заливка полигонов",
+ "faces, parts or UV islands": "грани, части или UV-острова",
+ "Select": "Выделять",
+ "Face": "Грань",
+ "One polygon (a triangle or a quad)": "Один полигон (треугольник или четырёхугольник)",
+ "Part": "Часть",
+ "A whole unattached part of the mesh": "Целая отдельная (не присоединённая) часть модели",
+ "UV island": "UV-остров",
+ "A whole UV island": "Целый UV-остров",
+ "Reveal (white)": "Показать (белым)",
+ "Hide (black)": "Скрыть (чёрным)",
+ "Erase": "Стереть",
+ "Ctrl inverts while held": "Ctrl временно переключает на противоположное",
+ "Click or drag over the model or the UV view · Ctrl: invert": "Клик или протяжка по модели или UV-развёртке · Ctrl: наоборот"
 }

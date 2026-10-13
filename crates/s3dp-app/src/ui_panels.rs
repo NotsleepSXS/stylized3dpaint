@@ -171,7 +171,7 @@ pub fn shading_menu(app: &mut App, ui: &mut egui::Ui) {
 
 pub fn toolbar(app: &mut App, ui: &mut egui::Ui) {
     ui.vertical_centered(|ui| {
-        for tool in [Tool::Brush, Tool::Eraser, Tool::Eyedropper] {
+        for tool in [Tool::Brush, Tool::Eraser, Tool::Eyedropper, Tool::PolygonFill] {
             if icon_button(ui, tool.icon(), app.tool == tool, &tool.label()).clicked() {
                 app.tool = tool;
             }
@@ -220,6 +220,31 @@ pub fn options_bar(app: &mut App, ui: &mut egui::Ui) {
         ui.separator();
         if app.tool == Tool::Eyedropper {
             ui.label(RichText::new(t("Click the model to pick every channel of the material under the cursor")).color(theme::TEXT_DIM));
+            return;
+        }
+        if app.tool == Tool::PolygonFill {
+            use s3dp_core::select::SelectMode;
+            ui.label(t("Select"));
+            for (m, label, tip) in [
+                (SelectMode::Face, t("Face"), t("One polygon (a triangle or a quad)")),
+                (SelectMode::Element, t("Part"), t("A whole unattached part of the mesh")),
+                (SelectMode::Island, t("UV island"), t("A whole UV island")),
+            ] {
+                if chip(ui, label, app.fill_mode == m, tip).clicked() {
+                    app.fill_mode = m;
+                }
+            }
+            ui.separator();
+            let mask = matches!(app.viewport.paint.target, s3dp_render::EditTarget::MaskItem(_));
+            let (add_l, rem_l) = if mask { (t("Reveal (white)"), t("Hide (black)")) } else { (t("Fill"), t("Erase")) };
+            if chip(ui, add_l, app.fill_add, t("Ctrl inverts while held")).clicked() {
+                app.fill_add = true;
+            }
+            if chip(ui, rem_l, !app.fill_add, t("Ctrl inverts while held")).clicked() {
+                app.fill_add = false;
+            }
+            ui.separator();
+            ui.label(RichText::new(t("Click or drag over the model or the UV view · Ctrl: invert")).color(theme::TEXT_DIM));
             return;
         }
         ui.label(t("Size"));
