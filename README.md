@@ -23,8 +23,7 @@ with its preview on a sample shape, and a layer stack of fills, folders, masks a
 
 ![The textured crowbar in Unreal Engine 5 after export](docs/images/in_engine_unreal.png)
 
-*The same kind of asset after export, in Unreal Engine 5 (Unreal ORM preset: DirectX normals with the
-height baked in, packed occlusion / roughness / metallic).*
+*A crowbar textured in Stylized3DPaint, exported and opened in Unreal Engine 5's static mesh editor.*
 
 ## HDRI lighting
 
