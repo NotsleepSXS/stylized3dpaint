@@ -1719,6 +1719,10 @@ impl Painter {
         let blur_def = registry().get("blur").ok_or("blur effect missing")?;
         let mut blur = blur_def.instantiate(0);
         blur.params.insert("intensity".into(), ParamValue::Float(g_blur));
+        // The generator's Seamless switch drives its Global Blur.
+        if let Some(p) = def.all_params().iter().find(|p| p.id == s3dp_core::effect_def::SEAMLESS_PARAM) {
+            blur.params.insert(p.id.clone(), def.value(e, p));
+        }
         blur.blend = BlendMode::Replace;
         let result = {
             let set = &self.sets[si];

@@ -282,7 +282,9 @@ impl EffectDef {
     /// Reads neighbouring surface texels (blur, warp, edge growth, ...): such effects get the
     /// shared "Seamless (3D)" parameter that lets them continue across UV seams.
     pub fn reads_neighbors(&self) -> bool {
-        self.neighbors || self.wgsl.contains("surface_px") || self.wgsl.contains("blur_world")
+        // Generators: their shared Global Blur reads neighbours (the generator itself is
+        // evaluated in 3D and is always seamless).
+        self.neighbors || self.category.is_generator() || self.wgsl.contains("surface_px") || self.wgsl.contains("blur_world")
     }
 
     /// Instance with default parameter values.
@@ -332,8 +334,8 @@ pub fn seamless_param() -> ParamDef {
         kind: ParamKind::Bool { default: true },
         group: None,
         group_ru: None,
-        tip: Some("Continue across UV seams (neighbours are found on the surface in 3D). Off: work in UV space only, faster, seams may show.".into()),
-        tip_ru: Some("Продолжать через швы развёртки (соседи ищутся по поверхности в 3D). Выкл.: только в UV, быстрее, швы могут быть видны.".into()),
+        tip: Some("Continue across UV seams (neighbours are found on the surface in 3D). Off: work in UV space only, faster, seams may show. Generators are always computed in 3D; for them this applies to the Global Blur.".into()),
+        tip_ru: Some("Продолжать через швы развёртки (соседи ищутся по поверхности в 3D). Выкл.: только в UV, быстрее, швы могут быть видны. Генераторы всегда считаются в 3D; для них это относится к общему «Размытию».".into()),
     }
 }
 

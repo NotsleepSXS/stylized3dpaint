@@ -81,7 +81,7 @@ fn neighbour_effects_default_to_seamless() {
     let reg = s3dp_core::registry();
     let with: Vec<&str> = reg.effects.iter().filter(|d| d.reads_neighbors()).map(|d| d.id.as_str()).collect();
     println!("seamless-capable: {with:?}");
-    for id in ["blur", "warp", "slope_blur", "directional_warp", "stylize_master", "metal_edge_wear", "curvature", "ambient_occlusion"] {
+    for id in ["blur", "warp", "slope_blur", "directional_warp", "stylize_master", "metal_edge_wear", "curvature", "ambient_occlusion", "noise", "position_gradient"] {
         let d = reg.get(id).unwrap();
         assert!(d.reads_neighbors(), "{id}");
         let p = d.all_params().into_iter().find(|p| p.id == "seamless").unwrap_or_else(|| panic!("{id}: no seamless param"));
