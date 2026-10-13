@@ -122,6 +122,7 @@ Supported model formats: glTF/GLB, FBX, OBJ.
 - `.s3dp` project files (zip: mesh + layer PNGs + baked maps + JSON)
 - Export presets: Unreal (ORM / separate), Unity URP / HDRP, Godot, glTF, Stylized Unlit,
   Spec/Gloss, Sketchfab — channel packing, padding, DirectX / OpenGL normals, PNG / TGA / TIFF / EXR / JPG
+- UV Checker view: a lettered 512 checker tiled by the texture resolution (texel density, flipped UVs)
 - Russian and English UI
 
 ## Independent, clean-room development
@@ -153,7 +154,7 @@ Built-in HDRIs: [Poly Haven](https://polyhaven.com) (CC0), see [assets/hdri/LICE
 - **M4** – mask generators (baked maps, height gradient, 3D noise), Warp / Slope Blur / Directional filters, Stylize filter layer, smart layers, Toon viewport ✅
 - **M5** – effect engine, layer tree, wear / stylize effects, export presets ✅
 - **M6** – native Wayland pen pressure ✅
-- **0.2** – Polygon Fill, UV-view painting, content browser with presets, seamless noise, Windows fixes ✅
+- **0.2** – Polygon Fill, UV-view painting, content browser with presets, seamless noise, UV Checker map, Windows fixes ✅
 - Next: brush textures and pen tilt
 
 Known issues: [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
