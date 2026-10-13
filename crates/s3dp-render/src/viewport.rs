@@ -122,6 +122,8 @@ pub struct Viewport {
     env: std::sync::Arc<crate::env::GpuEnv>,
     env_ready: bool,
     env_sampler: wgpu::Sampler,
+    /// UV Checker texture (uploaded on the first frame).
+    checker: Checker,
     pub env_settings: crate::env::EnvSettings,
     /// Fullscreen HDRI background.
     bg_pipeline: wgpu::RenderPipeline,
@@ -215,6 +217,23 @@ impl Viewport {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                // UV checker texture (repeating) and its sampler.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
         let env_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -234,7 +253,8 @@ impl Viewport {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let bind_group = globals_group(device, &bgl, &globals, &env, &env_sampler);
+        let checker = Checker::new(device);
+        let bind_group = globals_group(device, &bgl, &globals, &env, &env_sampler, &checker);
         // 7 material channels, baked AO, baked normal, inspect slot, then the sampler.
         let textures = 10u32;
         let mut view_entries: Vec<wgpu::BindGroupLayoutEntry> = (0..textures)
@@ -442,6 +462,7 @@ impl Viewport {
             env,
             env_ready: false,
             env_sampler,
+            checker,
             env_settings: Default::default(),
             bg_pipeline,
             wire_pipeline,
@@ -661,7 +682,7 @@ impl Viewport {
     pub fn set_environment(&mut self, device: &wgpu::Device, env: std::sync::Arc<crate::env::GpuEnv>) {
         self.env = env;
         self.env_ready = true;
-        self.bind_group = globals_group(device, &self.bgl, &self.globals, &self.env, &self.env_sampler);
+        self.bind_group = globals_group(device, &self.bgl, &self.globals, &self.env, &self.env_sampler, &self.checker);
         self.shown = None;
     }
 
@@ -671,6 +692,7 @@ impl Viewport {
     }
 
     fn ensure_env(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        self.checker.upload(queue);
         if !self.env_ready {
             let env = std::sync::Arc::new(crate::env::GpuEnv::neutral(device, queue));
             self.set_environment(device, env);
@@ -683,7 +705,8 @@ impl Viewport {
         Globals {
             view_proj: view_proj.to_cols_array_2d(),
             eye: camera.eye().extend(1.0).into(),
-            params: [mode.gpu_id() as f32, 8.0, uv as u32 as f32, 0.0],
+            // The 512 checker covers 512 texels: 1024 textures show it 2x2, 2048 4x4…
+            params: [mode.gpu_id() as f32, (self.texture_size as f32 / CHECKER_SIZE as f32).max(1.0), uv as u32 as f32, 0.0],
             inv_view_proj: view_proj.inverse().to_cols_array_2d(),
             sh: self.env.sh,
             env: [es.rotation, 2f32.powf(es.exposure) * if es.auto { self.env.auto_exposure } else { 1.0 }, self.env.max_lod, 1.0],
@@ -737,7 +760,7 @@ impl Viewport {
         };
         let globals = self.globals_for(camera, aspect, mode, what.uv, false);
         queue.write_buffer(&pv.globals, 0, bytemuck::bytes_of(&globals));
-        let pv_group = globals_group(device, &self.bgl, &pv.globals, &self.env, &self.env_sampler);
+        let pv_group = globals_group(device, &self.bgl, &pv.globals, &self.env, &self.env_sampler, &self.checker);
         let inspect = match what.shading {
             Some(m) => m.inspect(self.paint.active),
             None => what.mask_of.map_or(Inspect::None, Inspect::Mask),
@@ -937,7 +960,69 @@ fn make_targets(device: &wgpu::Device, size: [u32; 2]) -> Targets {
     }
 }
 
-fn globals_group(device: &wgpu::Device, bgl: &wgpu::BindGroupLayout, globals: &wgpu::Buffer, env: &crate::env::GpuEnv, sampler: &wgpu::Sampler) -> wgpu::BindGroup {
+const CHECKER_SIZE: u32 = 512;
+
+/// The UV Checker map (assets/textures/uv_checker.png) with its mip chain.
+struct Checker {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    sampler: wgpu::Sampler,
+    uploaded: bool,
+}
+
+impl Checker {
+    fn mips() -> u32 {
+        CHECKER_SIZE.ilog2() + 1
+    }
+
+    fn new(device: &wgpu::Device) -> Checker {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("uv checker"),
+            size: wgpu::Extent3d { width: CHECKER_SIZE, height: CHECKER_SIZE, depth_or_array_layers: 1 },
+            mip_level_count: Self::mips(),
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&Default::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("uv checker"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            anisotropy_clamp: 8,
+            ..Default::default()
+        });
+        Checker { texture, view, sampler, uploaded: false }
+    }
+
+    fn upload(&mut self, queue: &wgpu::Queue) {
+        if self.uploaded {
+            return;
+        }
+        self.uploaded = true;
+        let Ok(img) = image::load_from_memory(include_bytes!("../../../assets/textures/uv_checker.png")) else { return };
+        let mut img = img.resize_exact(CHECKER_SIZE, CHECKER_SIZE, image::imageops::FilterType::Triangle).to_rgba8();
+        for level in 0..Self::mips() {
+            let size = img.width();
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo { texture: &self.texture, mip_level: level, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+                &img,
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(size * 4), rows_per_image: Some(size) },
+                wgpu::Extent3d { width: size, height: size, depth_or_array_layers: 1 },
+            );
+            if size > 1 {
+                img = image::imageops::resize(&img, size / 2, size / 2, image::imageops::FilterType::Triangle);
+            }
+        }
+    }
+}
+
+fn globals_group(device: &wgpu::Device, bgl: &wgpu::BindGroupLayout, globals: &wgpu::Buffer, env: &crate::env::GpuEnv, sampler: &wgpu::Sampler, checker: &Checker) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("viewport globals"),
         layout: bgl,
@@ -945,6 +1030,8 @@ fn globals_group(device: &wgpu::Device, bgl: &wgpu::BindGroupLayout, globals: &w
             wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&env.view) },
             wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
+            wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&checker.view) },
+            wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&checker.sampler) },
         ],
     })
 }

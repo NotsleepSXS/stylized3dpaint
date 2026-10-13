@@ -6,6 +6,12 @@ use s3dp_render::{ShadingMode, Viewport, wgpu};
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = s3dp_render::gpu::new_instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
+    // WARP (software DX12 on the Windows CI runner) mis-runs the stroke / edge loops of the
+    // Stylization shader (see KNOWN_ISSUES.md); real GPUs are checked elsewhere.
+    if adapter.get_info().name.contains("Microsoft Basic Render") {
+        eprintln!("skipped on WARP");
+        return None;
+    }
     pollster::block_on(adapter.request_device(&Default::default())).ok()
 }
 

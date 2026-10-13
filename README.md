@@ -6,7 +6,7 @@
 Open-source 3D texture painter focused on stylized / hand-painted texturing.
 Written in Rust with wgpu and egui.
 
-**Status:** 0.1 — first public version, early but usable. Built for Linux on Wayland (native, incl. pen tablets); it also starts on X11 through winit, without pen pressure. A Windows build (installer) is provided but less tested; macOS is untested.
+**Status:** 0.2 — early but usable. Built for Linux on Wayland (native, incl. pen tablets); it also starts on X11 through winit, without pen pressure. A Windows build (installer) is provided but less tested; macOS is untested.
 
 | Lit | Toon |
 |-----|------|
@@ -77,6 +77,7 @@ Supported model formats: glTF/GLB, FBX, OBJ.
 | Action | Input |
 |--------|-------|
 | Paint / erase / eyedropper | B / E / I, then LMB |
+| Polygon Fill (faces / parts / UV islands) | P, then LMB (drag to fill several) |
 | Brush size | [ and ] |
 | Swap / default colors | X / D |
 | Orbit | Alt+LMB or MMB |
@@ -94,7 +95,9 @@ Supported model formats: glTF/GLB, FBX, OBJ.
 
 ## Features
 
-- Texture-space painting with occlusion test and seam-free UV borders
+- Texture-space painting with occlusion test and seam-free UV borders — in 3D or directly on the UV view
+- **Polygon Fill** by face, mesh part or UV island, in 3D and on the UV view; on masks it reveals (white) or hides (black). Wireframe overlay matches the mode (quads stay quads, island borders, parts) and is hidden behind the model
+- **Content browser**: preset materials, preset masks and effects, drag or double-click to apply; save your own from layers and masks (`.s3dmat` / `.s3dmask`)
 - Layer stack shared by all texture sets: paint and fill layers, masks, 18 Photoshop blend modes, opacity
 - Channels: Base Color, Roughness, Metallic, Height (shown as bump), Emissive
 - Eyedropper picks the whole material under the cursor
@@ -150,7 +153,8 @@ Built-in HDRIs: [Poly Haven](https://polyhaven.com) (CC0), see [assets/hdri/LICE
 - **M4** – mask generators (baked maps, height gradient, 3D noise), Warp / Slope Blur / Directional filters, Stylize filter layer, smart layers, Toon viewport ✅
 - **M5** – effect engine, layer tree, wear / stylize effects, export presets ✅
 - **M6** – native Wayland pen pressure ✅
-- Next: brush textures and pen tilt, release builds
+- **0.2** – Polygon Fill, UV-view painting, content browser with presets, seamless noise, Windows fixes ✅
+- Next: brush textures and pen tilt
 
 Known issues: [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
 

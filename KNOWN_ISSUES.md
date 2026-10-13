@@ -1,5 +1,15 @@
 # Known issues
 
+## Windows / DX12 on WARP: Stylization skips roughness / metallic strokes and edges (2026-10-13)
+
+On the Windows CI runner (WARP, the software DirectX 12 device, shaders compiled with DXC) the
+Stylization filter leaves Roughness / Metallic unchanged and its stroke relief has 1-texel
+steps; Height / AO and all other effect tests pass. The data points to the nested loops with
+`continue` (surface lookups in `sm_strokes` / `sm_edge_cav` / `blur_world`) running differently
+there. Real GPUs normally run through Vulkan (same path as Linux); not yet confirmed on a
+hardware DX12 device. The two `stylize` tests skip themselves on WARP. Workaround if seen on a
+real GPU: start with `WGPU_BACKEND=vulkan`.
+
 ## Stylized bake: artifacts on every edge / polygon (reported 2026-10-12) — FIXED 2026-10-13
 
 Fixed: edges / cavity / curvature now compare the interpolated normals of nearby surface points

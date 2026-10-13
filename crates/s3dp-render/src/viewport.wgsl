@@ -15,6 +15,8 @@ struct Globals {
 @group(0) @binding(0) var<uniform> g: Globals;
 @group(0) @binding(1) var env_tex: texture_2d<f32>;   // equirect, mip k = GGX roughness k / max
 @group(0) @binding(2) var env_samp: sampler;
+@group(0) @binding(3) var checker_tex: texture_2d<f32>;  // UV Checker map (sRGB), repeated params.y times
+@group(0) @binding(4) var checker_samp: sampler;
 
 const PI: f32 = 3.14159265;
 
@@ -190,6 +192,7 @@ fn fs_main(i: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
     let height = textureSample(height_tex, paint_sampler, i.uv).r;
     let emissive = textureSample(emissive_tex, paint_sampler, i.uv).rgb;
     let insp = textureSample(inspect_tex, paint_sampler, i.uv);
+    let checker = textureSample(checker_tex, checker_samp, i.uv * g.params.y).rgb;
 
     // Bump from height via screen-space derivatives.
     let dp_dx = dpdx(i.world);
@@ -207,9 +210,8 @@ fn fs_main(i: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
     switch mode {
         case 1u: { col = albedo + emissive; }
         case 2u: {
-            let c = floor(i.uv * g.params.y);
-            let check = (i32(c.x) + i32(c.y)) & 1;
-            col = lit(n, v, select(vec3<f32>(0.25, 0.45, 0.85), vec3<f32>(0.85), check == 0), 0.7, 0.0);
+            // Headlight shading keeps the checker colors readable.
+            col = checker * (0.55 + 0.45 * max(dot(n, v), 0.0));
         }
         case 3u: { col = srgb_to_linear(bn * 0.5 + 0.5); }
         case 50u: { col = srgb_to_linear(vec3<f32>(insp.r)); }
