@@ -121,6 +121,18 @@ Supported model formats: glTF/GLB, FBX, OBJ.
   Spec/Gloss, Sketchfab — channel packing, padding, DirectX / OpenGL normals, PNG / TGA / TIFF / EXR / JPG
 - Russian and English UI
 
+## Independent, clean-room development
+
+Stylized3DPaint is an **independent implementation**. It was written from scratch with the
+clean-room approach: **no source code, binaries, shaders, presets or other assets of Adobe
+Substance 3D Painter (or any other proprietary texturing tool) were used, decompiled or
+examined**. Only general, publicly known texturing concepts (layers, masks, mesh-map baking,
+PBR channels) were reimplemented, and the design was built from the start around the needs of
+**stylized / hand-painted** texturing rather than as a copy of an existing product.
+
+Substance 3D Painter is a trademark of Adobe; it is mentioned only for comparison.
+This project is not affiliated with or endorsed by Adobe.
+
 ## Credits
 
 Blend-mode formulas and the dark UI palette are adapted from
