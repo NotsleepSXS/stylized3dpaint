@@ -25,6 +25,8 @@ const INDENT: f32 = 14.0;
 pub struct LayersUi {
     /// Node being renamed and the edit buffer.
     renaming: Option<(u64, String)>,
+    /// The rename field still has to take the keyboard focus (once, when renaming starts).
+    rename_focus: bool,
     /// Node being dragged.
     dragging: Option<u64>,
     /// Nodes whose effect list is expanded.
@@ -104,6 +106,7 @@ enum Action {
     ToggleMask(u64),
     StartRename(u64),
     Rename(u64, String),
+    CancelRename,
     /// Context-menu operation on a content / mask effect: (node, effect, op).
     Effect(u64, u64, EffectOp),
     /// Click on a layer row with the Shift / Ctrl state.
@@ -559,8 +562,15 @@ fn node_row(app: &mut App, ui: &mut egui::Ui, node: &Node, depth: usize, actions
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(name_rect.shrink2(egui::vec2(0.0, 9.0))));
         let (_, buffer) = app.layers_ui.renaming.as_mut().unwrap();
         let edit = child.add(egui::TextEdit::singleline(buffer).desired_width(name_rect.width()));
-        edit.request_focus();
-        if edit.lost_focus() {
+        // Take the focus once; requesting it every frame re-grabbed it right after Enter
+        // released it, so the edit never ended.
+        if std::mem::take(&mut app.layers_ui.rename_focus) {
+            edit.request_focus();
+        }
+        let (enter, escape) = child.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape)));
+        if escape {
+            actions.push(Action::CancelRename);
+        } else if edit.lost_focus() || (enter && edit.has_focus()) {
             actions.push(Action::Rename(node.id, buffer.trim().to_owned()));
         }
     } else {
@@ -890,8 +900,10 @@ fn apply(app: &mut App, actions: Vec<Action>) {
             Action::StartRename(id) => {
                 if let Some(n) = paint.doc.find(id) {
                     app.layers_ui.renaming = Some((id, n.name.clone()));
+                    app.layers_ui.rename_focus = true;
                 }
             }
+            Action::CancelRename => app.layers_ui.renaming = None,
             Action::Rename(id, name) => {
                 app.layers_ui.renaming = None;
                 if !name.is_empty() {
@@ -949,5 +961,41 @@ fn apply(app: &mut App, actions: Vec<Action>) {
                 paint.target = EditTarget::Content;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod rename_tests {
+    /// Runs a text field through: focus, then Enter. `every_frame` = the old behaviour
+    /// (request_focus each frame). Returns whether the edit ended on Enter.
+    fn ends_on_enter(every_frame: bool) -> bool {
+        let ctx = egui::Context::default();
+        let mut text = String::from("Layer 1");
+        let mut first = true;
+        let mut ended = false;
+        for frame in 0..4 {
+            let mut input = egui::RawInput::default();
+            if frame == 2 {
+                input.events.push(egui::Event::Key { key: egui::Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() });
+            }
+            let mut out = ctx.run_ui(input, |ui| {
+                let r = ui.add(egui::TextEdit::singleline(&mut text));
+                if every_frame || std::mem::take(&mut first) {
+                    r.request_focus();
+                }
+                let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if frame == 2 && (r.lost_focus() || (!every_frame && enter && r.has_focus())) {
+                    ended = true;
+                }
+            });
+            out.textures_delta.clear();
+        }
+        ended
+    }
+
+    #[test]
+    fn enter_ends_the_rename() {
+        assert!(!ends_on_enter(true), "the old pattern never ended (reproduces the bug)");
+        assert!(ends_on_enter(false), "requesting focus once lets Enter commit");
     }
 }
