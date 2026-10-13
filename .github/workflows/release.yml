@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y libwayland-dev libxkbcommon-dev pkg-config librsvg2-bin
+      - run: cargo build --release -p stylized3dpaint
+      - run: packaging/linux/package.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*.tar.gz
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release -p stylized3dpaint
+      - name: Version
+        id: ver
+        shell: bash
+        run: echo "v=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Portable zip
+        shell: pwsh
+        run: |
+          $name = "Stylized3DPaint-${{ steps.ver.outputs.v }}-windows-x64-portable"
+          New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
+          Copy-Item target/release/stylized3dpaint.exe, LICENSE-MIT, LICENSE-APACHE "dist/$name/"
+          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
+      - name: Installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc "/DAppVersion=${{ steps.ver.outputs.v }}" packaging/windows/stylized3dpaint.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/*.zip
+            dist/*-setup.exe
+
+  release:
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Notes
+        id: notes
+        run: |
+          f="packaging/release-notes/${GITHUB_REF_NAME}.md"
+          if [ -f "$f" ]; then echo "file=$f" >> "$GITHUB_OUTPUT"; else echo "file=" >> "$GITHUB_OUTPUT"; fi
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Stylized3DPaint ${{ github.ref_name }}
+          body_path: ${{ steps.notes.outputs.file }}
+          prerelease: true
+          files: |
+            artifacts/linux/*
+            artifacts/windows/*

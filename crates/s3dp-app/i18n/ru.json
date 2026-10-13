@@ -15,7 +15,6 @@
  "Ambient Occlusion": "Затенение (AO)",
  "Anchor: other effects can read this result": "Якорь: другие эффекты могут брать этот результат",
  "Azimuth": "Азимут",
- "B brush · E eraser · I eyedropper · [ ] size · X swap colors · D default colors\nAlt+LMB / MMB orbit · RMB / Shift+MMB pan · Wheel zoom · F frame\nF1–F5 viewport mode · Ctrl+Z / Ctrl+Shift+Z undo / redo\nCtrl+Shift+N new layer · Ctrl+G group · Ctrl+J duplicate · Del delete\nCtrl+B bake · Ctrl+Shift+E export · Ctrl+S save": "B кисть · E ластик · I пипетка · [ ] размер · X поменять цвета · D цвета по умолчанию\nAlt+ЛКМ / СКМ вращение · ПКМ / Shift+СКМ сдвиг · колесо зум · F показать модель\nF1–F5 режим вьюпорта · Ctrl+Z / Ctrl+Shift+Z отмена / повтор\nCtrl+Shift+N новый слой · Ctrl+G в папку · Ctrl+J дубль · Del удалить\nCtrl+B запекание · Ctrl+Shift+E экспорт · Ctrl+S сохранить",
  "Background color — click to swap (X)": "Фоновый цвет — клик меняет местами (X)",
  "Bake": "Запечь",
  "Bake Mesh Maps": "Запекание меш-карт",
@@ -310,5 +309,8 @@
  ".hdr / .exr equirectangular maps; a map with a built-in's name replaces it (e.g. a 2K version).": "Карты .hdr / .exr (равнопромежуточные); карта с именем встроенной заменяет её (например, версия 2K).",
  "Environment (HDRI lighting) · Shift + right-drag rotates it": "Окружение (освещение HDRI) · Shift + правая кнопка — повернуть",
  "Auto exposure": "Автоэкспозиция",
- "Brings every map to the same average brightness": "Приводит все карты к одинаковой средней яркости"
+ "Brings every map to the same average brightness": "Приводит все карты к одинаковой средней яркости",
+ "Support the project on Boosty": "Поддержать проект на Boosty",
+ "Source code, releases, issues (GitHub)": "Исходный код, релизы, ошибки (GitHub)",
+ "B brush · E eraser · I eyedropper · [ ] size · X swap colors · D default colors\nAlt+LMB / MMB orbit · RMB / Shift+MMB pan · Wheel zoom · F frame\nF1–F5 viewport mode · Ctrl+Z / Ctrl+Shift+Z undo / redo\nCtrl+Shift+N new layer · Ctrl+G group · Ctrl+J duplicate · Del delete\nCtrl+B bake · Ctrl+Shift+E export · Ctrl+S save\nU viewport 3D / 3D + UV · Shift+RMB rotate the HDRI lighting": "B кисть · E ластик · I пипетка · [ ] размер · X поменять цвета · D цвета по умолчанию\nAlt+ЛКМ / СКМ вращение · ПКМ / Shift+СКМ сдвиг · колесо зум · F показать модель\nF1–F5 режим вьюпорта · Ctrl+Z / Ctrl+Shift+Z отмена / повтор\nCtrl+Shift+N новый слой · Ctrl+G в папку · Ctrl+J дубль · Del удалить\nCtrl+B запекание · Ctrl+Shift+E экспорт · Ctrl+S сохранить\nU вьюпорт 3D / 3D + UV · Shift+ПКМ повернуть HDRI-освещение"
 }

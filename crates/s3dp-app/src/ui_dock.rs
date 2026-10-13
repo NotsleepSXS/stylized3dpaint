@@ -57,8 +57,7 @@ pub fn default_layout() -> DockState<Tab> {
 }
 
 fn layout_path() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    Some(base.join("stylized3dpaint").join("layout.ron"))
+    Some(crate::paths::config_dir()?.join("layout.ron"))
 }
 
 /// The saved layout, or the default when there is none / it is unreadable / lost the viewport.

@@ -139,8 +139,13 @@ pub fn menu_bar(app: &mut App, ui: &mut egui::Ui) {
                  Alt+LMB / MMB orbit · RMB / Shift+MMB pan · Wheel zoom · F frame\n\
                  F1–F5 viewport mode · Ctrl+Z / Ctrl+Shift+Z undo / redo\n\
                  Ctrl+Shift+N new layer · Ctrl+G group · Ctrl+J duplicate · Del delete\n\
-                 Ctrl+B bake · Ctrl+Shift+E export · Ctrl+S save",
+                 Ctrl+B bake · Ctrl+Shift+E export · Ctrl+S save\n\
+                 U viewport 3D / 3D + UV · Shift+RMB rotate the HDRI lighting",
             ));
+            ui.separator();
+            ui.hyperlink_to(format!("{} {}", egui_phosphor::regular::HEART, t("Support the project on Boosty")), crate::BOOSTY_URL);
+            ui.hyperlink_to(format!("{} {}", egui_phosphor::regular::GITHUB_LOGO, t("Source code, releases, issues (GitHub)")), crate::REPO_URL);
+            ui.label(RichText::new(format!("Stylized3DPaint {}", env!("CARGO_PKG_VERSION"))).small().color(theme::TEXT_FAINT));
         });
     });
 }

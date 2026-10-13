@@ -36,7 +36,7 @@ impl Default for ExportUi {
 }
 
 fn default_dir() -> PathBuf {
-    std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Exports")).unwrap_or_else(|| PathBuf::from("."))
+    crate::paths::home().map(|h| h.join("Exports")).unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// Reads every needed buffer from the GPU (on the UI thread), then exports in a thread.

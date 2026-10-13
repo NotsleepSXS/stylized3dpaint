@@ -349,7 +349,7 @@ impl App {
         let path = match &self.project_path {
             Some(p) => p.with_extension("autosave.s3dp"),
             None => {
-                let dir = dirs_cache().join("stylized3dpaint");
+                let dir = crate::paths::cache_dir().unwrap_or_else(|| std::env::temp_dir().join("stylized3dpaint"));
                 let _ = std::fs::create_dir_all(&dir);
                 dir.join(format!("{}.autosave.s3dp", self.mesh.name))
             }
@@ -830,10 +830,6 @@ impl App {
             self.title = title;
         }
     }
-}
-
-fn dirs_cache() -> PathBuf {
-    std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache"))).unwrap_or_else(std::env::temp_dir)
 }
 
 /// Starts the native Wayland tablet reader on eframe's display (None elsewhere).

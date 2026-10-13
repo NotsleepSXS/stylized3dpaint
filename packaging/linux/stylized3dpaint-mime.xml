@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-stylized3dpaint-project">
+    <comment>Stylized3DPaint project</comment>
+    <comment xml:lang="ru">Проект Stylized3DPaint</comment>
+    <icon name="stylized3dpaint"/>
+    <glob pattern="*.s3dp"/>
+  </mime-type>
+</mime-info>

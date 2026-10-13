@@ -1,9 +1,12 @@
 # Stylized3DPaint
 
+[![Support on Boosty](https://img.shields.io/badge/Boosty-support%20the%20project-f15f2c)](https://boosty.to/nosleeproom)
+[![Release](https://img.shields.io/github/v/release/NotsleepSXS/stylized3dpaint?include_prereleases)](https://github.com/NotsleepSXS/stylized3dpaint/releases)
+
 Open-source 3D texture painter focused on stylized / hand-painted texturing.
 Written in Rust with wgpu and egui.
 
-**Status:** early development (pre-release). Built for Linux on Wayland (native, incl. pen tablets); it also starts on X11 through winit, without pen pressure. Windows / macOS untested.
+**Status:** 0.1 — first public version, early but usable. Built for Linux on Wayland (native, incl. pen tablets); it also starts on X11 through winit, without pen pressure. A Windows build (installer) is provided but less tested; macOS is untested.
 
 | Lit | Toon |
 |-----|------|
@@ -42,6 +45,20 @@ ACES tone mapping and auto exposure so every map has a similar brightness.
 - **Rotate** the lighting with the slider or **Shift + right-drag** in the viewport; exposure (EV),
   auto exposure, and the HDRI as a (blurred) background.
 - Maps are prepared in the background (~2 s for a 2K map) and the choice is remembered.
+
+## Download
+
+Get the latest version from **[Releases](https://github.com/NotsleepSXS/stylized3dpaint/releases)**:
+
+- **Linux (x86_64):** `Stylized3DPaint-<version>-linux-x86_64.tar.gz` — unpack and run `./install.sh`
+  (installs for your user: app menu entry, `stylized3dpaint` command, `.s3dp` file type; `./uninstall.sh`
+  removes it), or just run `./stylized3dpaint`.
+- **Windows (x64):** `Stylized3DPaint-<version>-windows-x64-setup.exe` installer, or the portable `.zip`.
+
+## Support the project
+
+Stylized3DPaint is free and open source. If it is useful to you, you can support its development on
+**[Boosty](https://boosty.to/nosleeproom)** ❤ — the link is also in the app under *Help*.
 
 ## Build
 

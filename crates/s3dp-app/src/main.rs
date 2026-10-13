@@ -1,6 +1,10 @@
+// No console window on Windows (logs go to %LOCALAPPDATA%\stylized3dpaint).
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod app;
 mod color_picker;
 mod i18n;
+mod paths;
 mod project;
 mod theme;
 mod ui_bake;
@@ -13,6 +17,17 @@ mod ui_panels;
 mod ui_preview;
 mod ui_widgets;
 
+/// Support link (Boosty) shown in Help and the README.
+pub const BOOSTY_URL: &str = "https://boosty.to/nosleeproom";
+pub const REPO_URL: &str = "https://github.com/NotsleepSXS/stylized3dpaint";
+
+/// Window / taskbar icon.
+fn app_icon() -> Option<egui::IconData> {
+    let img = image::load_from_memory(include_bytes!("../../../assets/icon/stylized3dpaint.png")).ok()?.to_rgba8();
+    let (width, height) = img.dimensions();
+    Some(egui::IconData { rgba: img.into_raw(), width, height })
+}
+
 fn main() -> eframe::Result {
     init_logging();
     let initial = std::env::args_os().nth(1).map(std::path::PathBuf::from);
@@ -23,6 +38,9 @@ fn main() -> eframe::Result {
             .with_inner_size([1600.0, 1000.0]),
         ..Default::default()
     };
+    if let Some(icon) = app_icon() {
+        options.viewport = options.viewport.with_icon(std::sync::Arc::new(icon));
+    }
     // Baking high-poly meshes needs big storage buffers: ask for what the GPU supports.
     if let egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup {
         let base = setup.device_descriptor.clone();
@@ -59,10 +77,7 @@ fn init_logging() {
             Ok(())
         }
     }
-    let dir = std::env::var_os("XDG_CACHE_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
-        .map(|d| d.join("stylized3dpaint"));
+    let dir = paths::cache_dir();
     let file = dir.and_then(|d| {
         std::fs::create_dir_all(&d).ok()?;
         std::fs::File::create(d.join("stylized3dpaint.log")).ok()

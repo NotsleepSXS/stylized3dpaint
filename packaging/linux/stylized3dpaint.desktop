@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Stylized3DPaint
+GenericName=3D Texture Painter
+GenericName[ru]=3D-покраска текстур
+Comment=Stylized / hand-painted 3D texturing
+Comment[ru]=Стилизованное рисование текстур на 3D-моделях
+Exec=@EXEC@ %f
+Icon=stylized3dpaint
+Terminal=false
+Categories=Graphics;3DGraphics;
+MimeType=application/x-stylized3dpaint-project;model/gltf-binary;model/gltf+json;model/obj;
+StartupWMClass=stylized3dpaint
